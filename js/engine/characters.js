@@ -39,8 +39,83 @@ function cyl(rt, rb, h, material, seg = 7){
 }
 
 // ------------------------------------------------------------------ rig ----
-// makePerson(cfg) -> Group with .anim = {mode, speed, phase, parts...}
-// Proportions are parameterized on height so hobbits/dwarves/elves read right.
+// makePerson(cfg) -> Group with .anim — v2 rig: rounded capsule anatomy,
+// articulated knees and elbows, painted faces, layered hair, belts and
+// draped cloaks. Same rig API as v1, so every region works unchanged.
+
+const FACE_CACHE = new Map();
+function faceTexture(skin){
+  if (FACE_CACHE.has(skin)) return FACE_CACHE.get(skin);
+  const cv = document.createElement('canvas');
+  cv.width = 512; cv.height = 256;
+  const g = cv.getContext('2d');
+  const col = new THREE.Color(skin);
+  const css = (m, a = 1) =>
+    `rgba(${Math.min(255, col.r * 255 * m) | 0},${Math.min(255, col.g * 255 * m) | 0},${Math.min(255, col.b * 255 * m) | 0},${a})`;
+  g.fillStyle = css(1); g.fillRect(0, 0, 512, 256);
+  // soft top (brow) and bottom (jaw) shading so the sphere reads as a skull
+  let grad = g.createLinearGradient(0, 192, 0, 256);
+  grad.addColorStop(0, css(1, 0)); grad.addColorStop(1, css(0.9, 0.7));
+  g.fillStyle = grad; g.fillRect(0, 192, 512, 64);
+  grad = g.createLinearGradient(0, 0, 0, 44);
+  grad.addColorStop(0, css(0.9, 0.8)); grad.addColorStop(1, css(1, 0));
+  g.fillStyle = grad; g.fillRect(0, 0, 512, 44);
+  // the face sits at u=0.25 (three.js sphere UV puts +z there) — features
+  // drawn bold so they survive being wrapped around a small sphere
+  const fx = 128;
+  // eye sockets
+  g.fillStyle = css(0.9, 0.32);
+  for (const s of [-1, 1]){
+    g.beginPath(); g.ellipse(fx + s * 30, 116, 15, 11, 0, 0, Math.PI * 2); g.fill();
+  }
+  // eyes — dark with a glint
+  g.fillStyle = 'rgba(28,20,14,0.98)';
+  for (const s of [-1, 1]){
+    g.beginPath(); g.ellipse(fx + s * 30, 118, 8, 10, 0, 0, Math.PI * 2); g.fill();
+  }
+  g.fillStyle = 'rgba(255,250,240,0.85)';
+  for (const s of [-1, 1]){
+    g.beginPath(); g.arc(fx + s * 30 - 2.6, 114.5, 2.4, 0, Math.PI * 2); g.fill();
+  }
+  // brows
+  g.strokeStyle = css(0.45, 0.9); g.lineWidth = 6; g.lineCap = 'round';
+  for (const s of [-1, 1]){
+    g.beginPath();
+    g.moveTo(fx + s * 16, 99);
+    g.quadraticCurveTo(fx + s * 32, 93, fx + s * 45, 100);
+    g.stroke();
+  }
+  // nose
+  g.strokeStyle = css(0.82, 0.5); g.lineWidth = 4.5;
+  g.beginPath(); g.moveTo(fx, 124); g.lineTo(fx - 3, 149); g.quadraticCurveTo(fx + 2, 155, fx + 8, 150); g.stroke();
+  // mouth
+  g.strokeStyle = css(0.5, 0.9); g.lineWidth = 5.5;
+  g.beginPath(); g.moveTo(fx - 15, 177); g.quadraticCurveTo(fx, 184, fx + 15, 177); g.stroke();
+  // faint warm cheeks
+  g.fillStyle = css(1.05, 0.14);
+  for (const s of [-1, 1]){
+    g.beginPath(); g.ellipse(fx + s * 42, 152, 17, 12, 0, 0, Math.PI * 2); g.fill();
+  }
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  FACE_CACHE.set(skin, tex);
+  return tex;
+}
+const HEAD_CACHE = new Map();
+function headMat(skin){
+  if (!HEAD_CACHE.has(skin)){
+    HEAD_CACHE.set(skin, new THREE.MeshStandardMaterial({
+      map: faceTexture(skin), roughness: 0.82,
+    }));
+  }
+  return HEAD_CACHE.get(skin);
+}
+function capsule(r, len, material, rs = 10){
+  const m = new THREE.Mesh(new THREE.CapsuleGeometry(r, len, 4, rs), material);
+  m.castShadow = true;
+  return m;
+}
+
 export function makePerson(cfg = {}){
   const c = Object.assign({
     height: 1.8,
@@ -59,8 +134,8 @@ export function makePerson(cfg = {}){
   }, cfg);
 
   const H = c.height, B = c.bulk;
-  const legH = H * 0.46, torsoH = H * 0.34, headR = H * 0.085;
-  const shoulderW = H * 0.24 * B;
+  const legH = H * 0.47, torsoH = H * 0.33, headR = H * 0.076;
+  const shoulderW = H * 0.22 * B;
 
   const root = new THREE.Group();
   const body = new THREE.Group();
@@ -71,140 +146,270 @@ export function makePerson(cfg = {}){
   const tunicM = c.robe ? mat(c.robe) : mat(c.tunic);
   if (c.glow){ tunicM.emissive = new THREE.Color(c.robe || c.tunic); tunicM.emissiveIntensity = c.glow; }
 
-  // torso
-  const torso = box(shoulderW, torsoH, shoulderW * 0.55, tunicM);
-  torso.position.y = torsoH / 2;
-  torso.geometry.translate(0, 0, 0);
-  body.add(torso);
+  // ---- torso: rounded chest over a tapered waist --------------------------
+  const chest = capsule(shoulderW * 0.42, torsoH * 0.42, tunicM, 12);
+  chest.position.y = torsoH * 0.66;
+  chest.scale.set(1.04, 1, 0.7);
+  body.add(chest);
+  const waist = new THREE.Mesh(
+    new THREE.CylinderGeometry(shoulderW * 0.38, shoulderW * 0.47, torsoH * 0.55, 12), tunicM);
+  waist.position.y = torsoH * 0.26;
+  waist.scale.z = 0.76;
+  waist.castShadow = true;
+  body.add(waist);
 
-  // head
+  if (!c.robe){
+    // belt + buckle
+    const belt = new THREE.Mesh(
+      new THREE.CylinderGeometry(shoulderW * 0.485, shoulderW * 0.485, H * 0.026, 12),
+      mat(0x33261a, { roughness: 0.6 }));
+    belt.position.y = torsoH * 0.28;
+    belt.scale.z = 0.78;
+    const buckle = new THREE.Mesh(new THREE.BoxGeometry(H * 0.028, H * 0.022, H * 0.008), metal(0xb89a4a));
+    buckle.position.set(0, torsoH * 0.28, shoulderW * 0.38);
+    body.add(belt, buckle);
+    // tunic hem flaring over the hips
+    const hem = new THREE.Mesh(
+      new THREE.CylinderGeometry(shoulderW * 0.48, shoulderW * 0.6, legH * 0.32, 12, 1, true), tunicM);
+    hem.position.y = -legH * 0.02;
+    hem.scale.z = 0.78;
+    hem.castShadow = true;
+    body.add(hem);
+  }
+
+  // ---- neck + head --------------------------------------------------------
+  const neck = new THREE.Mesh(new THREE.CylinderGeometry(headR * 0.44, headR * 0.55, headR * 1.0, 10), skinM);
+  neck.position.y = torsoH * 0.99;
+  neck.castShadow = true;
+  body.add(neck);
+
   const headG = new THREE.Group();
-  headG.position.y = torsoH + headR * 0.9;
-  const head = sph(headR, skinM, 0.92, 1.05);
+  headG.position.y = torsoH + headR * 1.15;
+  const head = new THREE.Mesh(new THREE.SphereGeometry(headR, 18, 14), headMat(c.skin));
+  head.scale.set(0.92, 1.1, 0.95);
+  head.castShadow = true;
   headG.add(head);
+  // ears
+  for (const s of [-1, 1]){
+    const ear = new THREE.Mesh(new THREE.SphereGeometry(headR * 0.18, 8, 6), skinM);
+    ear.position.set(s * headR * 0.84, -headR * 0.08, -headR * 0.05);
+    ear.scale.set(0.5, 1, 0.7);
+    if (c.bulk < 0.96 && c.height > 1.6){ // elves: pointed
+      ear.scale.set(0.45, 1.5, 0.6);
+      ear.rotation.z = s * -0.5;
+    }
+    headG.add(ear);
+  }
+
   if (c.hairLen > 0 && !c.hoodUp && c.hat !== 'wizard' && !c.helm){
-    const hair = sph(headR * 1.06, mat(c.hair), 0.95, 0.9 + c.hairLen * 0.35);
-    hair.position.y = headR * 0.12; hair.position.z = -headR * 0.12;
-    headG.add(hair);
-    if (c.hairLen > 0.6){
-      const back = box(headR * 1.5, headR * 2.4 * c.hairLen, headR * 0.5, mat(c.hair));
-      back.position.set(0, -headR * 0.9 * c.hairLen, -headR * 0.75);
-      headG.add(back);
+    const hairM = mat(c.hair, { roughness: 1 });
+    const cap = new THREE.Mesh(
+      new THREE.SphereGeometry(headR * 1.07, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.55), hairM);
+    cap.position.set(0, headR * 0.22, -headR * 0.06);
+    cap.scale.set(0.96, 1.02, 1.02);
+    cap.rotation.x = -0.07;
+    cap.castShadow = true;
+    headG.add(cap);
+    if (c.hairLen > 0.55){
+      const fall = capsule(headR * 0.42, headR * 2.6 * c.hairLen, hairM, 8);
+      fall.position.set(0, -headR * 1.05 * c.hairLen, -headR * 0.7);
+      fall.scale.set(1.15, 1, 0.5);
+      headG.add(fall);
+      for (const s of [-1, 1]){ // side locks framing the face
+        const lock = capsule(headR * 0.17, headR * 1.5 * c.hairLen, hairM, 6);
+        lock.position.set(s * headR * 0.8, -headR * 0.6 * c.hairLen, headR * 0.12);
+        lock.rotation.z = s * 0.08;
+        headG.add(lock);
+      }
     }
   }
   if (c.beard > 0){
-    const bm = mat(c.beardColor ?? c.hair);
-    const beard = cone(headR * 0.75, headR * 2.6 * c.beard, bm, 6);
-    beard.rotation.x = Math.PI;
-    beard.position.set(0, -headR * (0.4 + c.beard * 0.85), headR * 0.42);
+    const bm = mat(c.beardColor ?? c.hair, { roughness: 1 });
+    const beard = capsule(headR * 0.48, headR * 1.6 * c.beard, bm, 8);
+    beard.position.set(0, -headR * (0.6 + c.beard * 0.55), headR * 0.34);
+    beard.scale.set(1.1, 1, 0.6);
     headG.add(beard);
+    const mo = capsule(headR * 0.11, headR * 0.5, bm, 6);
+    mo.rotation.z = Math.PI / 2;
+    mo.position.set(0, -headR * 0.32, headR * 0.8);
+    headG.add(mo);
   }
   if (c.hat === 'wizard'){
-    const brim = cyl(headR * 2.1, headR * 2.3, headR * 0.28, mat(c.cloak || 0x59544c));
-    brim.position.y = headR * 0.62;
-    const peak = cone(headR * 1.15, headR * 3.4, brim.material, 8);
+    const hatM = mat(c.cloak || 0x59544c, { roughness: 1 });
+    const brim = new THREE.Mesh(new THREE.CylinderGeometry(headR * 2.05, headR * 2.25, headR * 0.22, 14), hatM);
+    brim.position.y = headR * 0.66;
+    brim.rotation.z = 0.06;
+    const peak = new THREE.Mesh(new THREE.ConeGeometry(headR * 1.12, headR * 3.2, 12), hatM);
     peak.position.y = headR * 2.1;
-    peak.rotation.x = 0.16;
+    peak.rotation.x = 0.18; peak.rotation.z = 0.08;
+    brim.castShadow = peak.castShadow = true;
     headG.add(brim, peak);
   }
   if (c.helm === 'gondor'){
-    const hm = metal(0xb8bcc4);
-    const cap = sph(headR * 1.12, hm, 0.95, 1.05);
-    cap.position.y = headR * 0.15;
-    const crest = box(headR * 0.16, headR * 1.1, headR * 1.6, hm);
-    crest.position.y = headR * 1.1;
-    // white wings
+    const hm = mat(0x9aa2ae, { roughness: 0.5, metalness: 0.55 });
+    const cap = new THREE.Mesh(
+      new THREE.SphereGeometry(headR * 1.14, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.58), hm);
+    cap.position.y = headR * 0.16;
+    cap.scale.set(0.95, 1.12, 1.0);
+    // cheek guards
+    for (const s of [-1, 1]){
+      const cheek = new THREE.Mesh(new THREE.BoxGeometry(headR * 0.16, headR * 0.7, headR * 0.5), hm);
+      cheek.position.set(s * headR * 0.88, -headR * 0.22, headR * 0.3);
+      headG.add(cheek);
+    }
+    const crest = new THREE.Mesh(new THREE.BoxGeometry(headR * 0.14, headR * 0.9, headR * 1.7), hm);
+    crest.position.y = headR * 1.15;
     const wm = mat(0xe8e6df);
     for (const s of [-1, 1]){
-      const wing = box(headR * 0.1, headR * 0.85, headR * 1.3, wm);
-      wing.position.set(s * headR * 0.95, headR * 0.55, -headR * 0.2);
-      wing.rotation.z = s * -0.5; wing.rotation.y = s * 0.3;
+      const wing = new THREE.Mesh(new THREE.BoxGeometry(headR * 0.08, headR * 0.9, headR * 1.4), wm);
+      wing.position.set(s * headR * 0.95, headR * 0.55, -headR * 0.25);
+      wing.rotation.z = s * -0.55; wing.rotation.y = s * 0.35;
       headG.add(wing);
     }
+    cap.castShadow = true;
     headG.add(cap, crest);
   } else if (c.helm === 'rohan'){
-    const hm = metal(0x9a8a5a);
-    const cap = sph(headR * 1.1, hm, 0.95, 1.0);
+    const hm = mat(0x8f7f50, { roughness: 0.5, metalness: 0.5 });
+    const cap = new THREE.Mesh(
+      new THREE.SphereGeometry(headR * 1.12, 14, 10, 0, Math.PI * 2, 0, Math.PI * 0.56), hm);
     cap.position.y = headR * 0.2;
-    const tail = cyl(headR * 0.2, headR * 0.05, headR * 1.6, mat(0xd8cfb8));
-    tail.position.set(0, headR * 0.4, -headR * 1.0);
+    cap.scale.set(0.95, 1.02, 1.0);
+    const nasal = new THREE.Mesh(new THREE.BoxGeometry(headR * 0.14, headR * 0.7, headR * 0.1), hm);
+    nasal.position.set(0, headR * 0.15, headR * 0.95);
+    const tail = capsule(headR * 0.16, headR * 1.2, mat(0xd8cfb8), 6);
+    tail.position.set(0, headR * 0.2, -headR * 1.0);
     tail.rotation.x = 0.9;
-    headG.add(cap, tail);
+    cap.castShadow = true;
+    headG.add(cap, nasal, tail);
   } else if (c.helm === 'orc'){
     const hm = mat(0x3a3632, { roughness: 0.6, metalness: 0.5 });
-    const cap = cone(headR * 1.15, headR * 1.6, hm, 6);
-    cap.position.y = headR * 0.45;
+    const cap = new THREE.Mesh(new THREE.ConeGeometry(headR * 1.15, headR * 1.5, 8), hm);
+    cap.position.y = headR * 0.48;
+    cap.castShadow = true;
     headG.add(cap);
   }
   if (c.hoodUp){
-    const hood = cone(headR * 1.5, headR * 2.6, mat(c.cloak || 0x3a4034), 7);
-    hood.position.y = headR * 0.45;
-    hood.rotation.x = 0.22;
-    headG.add(hood);
+    const hoodM = mat(c.cloak || 0x3a4034, { roughness: 1, side: THREE.DoubleSide });
+    // a deep cowl: hemisphere tilted so the face sits shadowed inside it
+    const hood = new THREE.Mesh(
+      new THREE.SphereGeometry(headR * 1.32, 16, 12, 0, Math.PI * 2, 0, Math.PI * 0.62), hoodM);
+    hood.position.set(0, headR * 0.16, -headR * 0.12);
+    hood.rotation.x = -0.6;
+    hood.castShadow = true;
+    // a soft peak at the crown
+    const peak = new THREE.Mesh(new THREE.ConeGeometry(headR * 0.5, headR * 0.9, 8), hoodM);
+    peak.position.set(0, headR * 1.28, -headR * 0.45);
+    peak.rotation.x = -0.7;
+    // mantle draping onto the shoulders
+    const mantle = new THREE.Mesh(
+      new THREE.CylinderGeometry(headR * 1.05, shoulderW * 0.78, headR * 1.7, 12, 1, true), hoodM);
+    mantle.position.y = -headR * 1.15;
+    mantle.castShadow = true;
+    headG.add(hood, peak, mantle);
   }
   body.add(headG);
 
-  // arms
-  const armL = H * 0.36, armR2 = H * 0.03 * B;
+  // ---- arms with elbows ---------------------------------------------------
+  const armL = H * 0.35, armR2 = H * 0.027 * B;
   function makeArm(side){
     const g = new THREE.Group();
-    g.position.set(side * (shoulderW / 2 + armR2 * 0.8), torsoH * 0.92, 0);
-    const upper = cyl(armR2, armR2 * 0.9, armL * 0.52, tunicM);
+    g.position.set(side * (shoulderW / 2 + armR2 * 0.4), torsoH * 0.9, 0);
+    const shoulder = new THREE.Mesh(new THREE.SphereGeometry(armR2 * 1.35, 10, 8), tunicM);
+    shoulder.position.x = -side * armR2 * 0.3;
+    shoulder.castShadow = true;
+    const upper = capsule(armR2, armL * 0.4, tunicM, 8);
     upper.position.y = -armL * 0.26;
-    const fore = cyl(armR2 * 0.85, armR2 * 0.7, armL * 0.48, c.robe ? tunicM : skinM);
-    fore.position.y = -armL * 0.52 - armL * 0.24;
-    const hand = sph(armR2 * 1.1, skinM);
-    hand.position.y = -armL * 1.02;
-    g.add(upper, fore, hand);
+    const elbow = new THREE.Group();
+    elbow.position.y = -armL * 0.5;
+    const elbowCap = new THREE.Mesh(new THREE.SphereGeometry(armR2 * 1.02, 8, 6), tunicM);
+    elbowCap.castShadow = true;
+    elbow.add(elbowCap);
+    const fore = capsule(armR2 * 0.82, armL * 0.38, (c.robe || c.helm) ? tunicM : skinM, 8);
+    fore.position.y = -armL * 0.22;
+    const hand = new THREE.Mesh(new THREE.SphereGeometry(armR2 * 1.12, 8, 6), skinM);
+    hand.position.y = -armL * 0.5;
+    hand.scale.set(0.8, 1.2, 0.65);
+    hand.castShadow = true;
+    elbow.add(fore, hand);
+    elbow.rotation.x = -0.24;
+    g.add(shoulder, upper, elbow);
+    g.userData.elbow = elbow;
     return g;
   }
   const armLG = makeArm(-1), armRG = makeArm(1);
   body.add(armLG, armRG);
 
-  // legs (hidden under a robe but still animate the hem via sway)
-  const legR3 = H * 0.035 * B;
+  // ---- legs with knees ----------------------------------------------------
+  const legR3 = H * 0.032 * B;
   function makeLeg(side){
     const g = new THREE.Group();
-    g.position.set(side * shoulderW * 0.22, 0, 0);
-    const thigh = cyl(legR3, legR3 * 0.9, legH * 0.52, mat(c.pants));
+    g.position.set(side * shoulderW * 0.25, 0, 0);
+    const pantsM = mat(c.pants);
+    const thigh = capsule(legR3 * 1.15, legH * 0.38, pantsM, 8);
     thigh.position.y = -legH * 0.26;
-    const shin = cyl(legR3 * 0.85, legR3 * 0.7, legH * 0.46, mat(c.pants));
-    shin.position.y = -legH * 0.75;
-    const foot = box(legR3 * 2.2, legR3 * 1.1, legR3 * 3.4, mat(c.boots));
-    foot.position.set(0, -legH * 0.98, legR3 * 0.9);
-    g.add(thigh, shin, foot);
+    const knee = new THREE.Group();
+    knee.position.y = -legH * 0.5;
+    const kneeCap = new THREE.Mesh(new THREE.SphereGeometry(legR3 * 1.05, 8, 6), pantsM);
+    kneeCap.castShadow = true;
+    knee.add(kneeCap);
+    const shin = capsule(legR3 * 0.82, legH * 0.34, pantsM, 8);
+    shin.position.y = -legH * 0.2;
+    const foot = new THREE.Mesh(
+      new THREE.BoxGeometry(legR3 * 2.0, legR3 * 1.2, legR3 * 3.4), mat(c.boots));
+    foot.position.set(0, -legH * 0.45, legR3 * 1.0);
+    foot.castShadow = true;
+    knee.add(shin, foot);
+    g.add(thigh, knee);
+    g.userData.knee = knee;
     return g;
   }
   const legLG = makeLeg(-1), legRG = makeLeg(1);
   legLG.position.y = legH; legRG.position.y = legH;
   root.add(legLG, legRG);
 
-  // robe skirt
+  // ---- robe: a lathe skirt that flares and kisses the ground --------------
   if (c.robe){
-    const skirt = cone(shoulderW * 0.72, legH * 1.06, tunicM, 9);
-    skirt.position.y = legH * 0.5;
+    const pts = [];
+    for (let i = 0; i <= 7; i++){
+      const t = i / 7;
+      const r = shoulderW * (0.36 + t * 0.46 + Math.sin(t * Math.PI) * 0.05);
+      pts.push(new THREE.Vector2(r, -t * legH * 1.04));
+    }
+    // curl inward and close the hem
+    pts.push(new THREE.Vector2(shoulderW * 0.5, -legH * 1.04));
+    pts.push(new THREE.Vector2(0.02, -legH * 1.02));
+    const skirt = new THREE.Mesh(new THREE.LatheGeometry(pts, 16), tunicM);
+    skirt.position.y = legH * 1.02;
+    skirt.castShadow = true;
     root.add(skirt);
     legLG.visible = legRG.visible = false;
   }
 
-  // cloak
+  // ---- cloak — draped, animated in animatePerson --------------------------
+  let cloakMesh = null;
   if (c.cloak){
-    const ck = new THREE.Mesh(
-      new THREE.PlaneGeometry(shoulderW * 1.35, H * 0.62, 4, 6),
-      mat(c.cloak, { side: THREE.DoubleSide }));
-    const p = ck.geometry.attributes.position;
+    cloakMesh = new THREE.Mesh(
+      new THREE.PlaneGeometry(shoulderW * 1.06, H * 0.58, 6, 8),
+      mat(c.cloak, { side: THREE.DoubleSide, roughness: 1 }));
+    const p = cloakMesh.geometry.attributes.position;
     for (let i = 0; i < p.count; i++){
-      const v = p.getY(i) / (H * 0.62) + 0.5;
-      p.setZ(i, -(1 - v) * H * 0.1);
-      p.setX(i, p.getX(i) * (1 + (1 - v) * 0.5));
+      const u = p.getX(i) / (shoulderW * 1.06) + 0.5;
+      const v = p.getY(i) / (H * 0.58) + 0.5;
+      p.setZ(i, -(1 - v) * H * 0.085 - Math.abs(u - 0.5) ** 2 * H * 0.12);
+      p.setX(i, p.getX(i) * (1 + (1 - v) * 0.32));
     }
-    ck.geometry.computeVertexNormals();
-    ck.castShadow = true;
-    ck.position.set(0, torsoH * 0.62, -shoulderW * 0.3);
-    body.add(ck);
+    cloakMesh.geometry.computeVertexNormals();
+    cloakMesh.castShadow = true;
+    cloakMesh.position.set(0, torsoH * 0.7, -shoulderW * 0.3);
+    cloakMesh.rotation.x = 0.12;
+    body.add(cloakMesh);
+    // clasp
+    const clasp = new THREE.Mesh(new THREE.SphereGeometry(H * 0.012, 8, 6), metal(0xc8b048));
+    clasp.position.set(0, torsoH * 0.92, shoulderW * 0.36);
+    body.add(clasp);
   }
 
-  // props
+  // ---- props (attach points unchanged from v1) ----------------------------
   let prop = null;
   const woodM = mat(0x5a442e);
   if (c.prop === 'staff'){
@@ -289,6 +494,9 @@ export function makePerson(cfg = {}){
   root.userData.anim = {
     mode: c.pose, phase: Math.random() * 6.28, speedMul: 1,
     body, headG, armLG, armRG, legLG, legRG, legH, H,
+    kneeL: legLG.userData.knee, kneeR: legRG.userData.knee,
+    elbowL: armLG.userData.elbow, elbowR: armRG.userData.elbow,
+    cloak: cloakMesh,
   };
   applyPose(root, c.pose);
   return root;
@@ -301,15 +509,19 @@ export function applyPose(rig, pose){
     a.body.position.y = a.legH * 0.55;
     a.legLG.rotation.x = -1.5; a.legRG.rotation.x = -1.5;
     a.legLG.position.y = a.legH * 0.55; a.legRG.position.y = a.legH * 0.55;
+    if (a.kneeL){ a.kneeL.rotation.x = 1.45; a.kneeR.rotation.x = 1.45; }
   } else if (pose === 'ride'){
-    a.legLG.rotation.x = -0.9; a.legRG.rotation.x = -0.9;
+    a.legLG.rotation.x = -0.95; a.legRG.rotation.x = -0.95;
     a.legLG.rotation.z = 0.35; a.legRG.rotation.z = -0.35;
+    if (a.kneeL){ a.kneeL.rotation.x = 1.15; a.kneeR.rotation.x = 1.15; }
   } else if (pose === 'raise'){ // staff raised — YOU SHALL NOT PASS
     a.armRG.rotation.x = -2.6;
     a.armLG.rotation.x = -0.7; a.armLG.rotation.z = 0.5;
+    if (a.elbowR) a.elbowR.rotation.x = -0.1;
   } else if (pose === 'kneel'){
-    a.body.position.y = a.legH * 0.7;
+    a.body.position.y = a.legH * 0.62;
     a.legLG.rotation.x = -1.7; a.legRG.rotation.x = 0.5;
+    if (a.kneeL){ a.kneeL.rotation.x = 2.1; a.kneeR.rotation.x = 1.3; }
   }
 }
 
@@ -325,20 +537,43 @@ export function animatePerson(rig, t, walking, speed = 1){
   if (walking){
     const f = t * 6.4 * speed + a.phase;
     const s = Math.sin(f), cS = Math.cos(f);
-    const amp = 0.55;
+    const amp = 0.5;
     a.legLG.rotation.x = s * amp;
     a.legRG.rotation.x = -s * amp;
-    if (a.mode !== 'raise'){
-      a.armLG.rotation.x = -s * amp * 0.7 + (a.armLG.rotation.x_base || 0);
-      if (!a.armRG.children.length || a.mode === 'walk') a.armRG.rotation.x = s * amp * 0.55;
+    // knees flex as each leg swings through
+    if (a.kneeL){
+      a.kneeL.rotation.x = Math.max(0, Math.sin(f + 1.9)) * 0.85;
+      a.kneeR.rotation.x = Math.max(0, Math.sin(f + Math.PI + 1.9)) * 0.85;
     }
-    a.body.position.y = a.legH + Math.abs(cS) * 0.045 * a.H;
-    a.body.rotation.z = s * 0.03;
+    if (a.mode !== 'raise'){
+      a.armLG.rotation.x = -s * amp * 0.65;
+      if (!a.armRG.children.some(ch => ch.userData && ch.userData.isProp) || a.mode === 'walk'){
+        if (a.armRG.children.length <= 3) a.armRG.rotation.x = s * amp * 0.5;
+      }
+      if (a.elbowL){
+        a.elbowL.rotation.x = -0.24 - Math.max(0, -s) * 0.35;
+        a.elbowR.rotation.x = -0.24 - Math.max(0, s) * 0.35;
+      }
+    }
+    a.body.position.y = a.legH + Math.abs(cS) * 0.04 * a.H;
+    a.body.rotation.z = s * 0.028;
+    a.body.rotation.y = -s * 0.05;           // shoulders counter the stride
+    a.headG.rotation.y = s * 0.06;           // head stays roughly forward
+    a.headG.rotation.x = Math.abs(cS) * 0.04;
+    if (a.cloak){
+      a.cloak.rotation.x = 0.16 + Math.abs(s) * 0.1 + Math.sin(t * 2.3 + a.phase) * 0.03;
+    }
   } else {
     const f = t * 1.6 + a.phase;
     a.body.position.y = a.legH + Math.sin(f) * 0.008 * a.H;
     a.body.rotation.z = Math.sin(f * 0.7) * 0.015;
-    if (a.mode === 'walk'){ a.legLG.rotation.x = a.legRG.rotation.x = 0; }
+    a.headG.rotation.y = Math.sin(f * 0.31) * 0.22;   // idle glances
+    a.headG.rotation.x = Math.sin(f * 0.43) * 0.05;
+    if (a.cloak) a.cloak.rotation.x = 0.12 + Math.sin(t * 1.1 + a.phase) * 0.025;
+    if (a.mode === 'walk'){
+      a.legLG.rotation.x = a.legRG.rotation.x = 0;
+      if (a.kneeL){ a.kneeL.rotation.x = a.kneeR.rotation.x = 0.06; }
+    }
   }
 }
 

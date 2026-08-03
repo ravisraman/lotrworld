@@ -99,6 +99,40 @@
     text-shadow:0 1px 6px #000}
   #brand .b2{font-size:9.5px;font-style:italic;letter-spacing:.28em;color:rgba(232,221,192,.4);
     margin-top:3px}
+
+  /* ---- the traveller's map ---- */
+  #mapoverlay{position:fixed;inset:0;z-index:60;background:rgba(6,5,3,.72);
+    display:flex;align-items:center;justify-content:center;
+    opacity:0;pointer-events:none;transition:opacity .45s ease;backdrop-filter:blur(3px)}
+  #mapoverlay.open{opacity:1;pointer-events:auto}
+  #mapframe{position:relative;width:min(92vw,150vh);aspect-ratio:3/2;max-height:88vh;
+    box-shadow:0 30px 90px rgba(0,0,0,.7);transition:transform .65s cubic-bezier(.5,0,.8,.4);
+    transform:scale(.98)}
+  #mapoverlay.open #mapframe{transform:scale(1)}
+  #mapoverlay.zooming #mapframe{transform:scale(3.4)}
+  #mapoverlay.zooming{opacity:0;transition:opacity .6s ease .12s}
+  #mapcanvas{position:absolute;inset:0;width:100%;height:100%}
+  #mapmarks{position:absolute;inset:0}
+  .mapmark{position:absolute;transform:translate(-50%,-50%);background:none;border:0;
+    cursor:pointer;font-family:Georgia,serif;padding:10px;z-index:2}
+  .mapmark .mm-dot{display:block;width:11px;height:11px;margin:0 auto;
+    background:#7d2f1d;border:1.5px solid #4a3a26;transform:rotate(45deg);
+    transition:all .25s;box-shadow:0 1px 3px rgba(60,40,20,.5)}
+  .mapmark .mm-name{display:block;margin-top:7px;font-size:13px;letter-spacing:.14em;
+    color:#4a3a26;white-space:nowrap;text-shadow:0 1px 0 rgba(238,224,186,.8);
+    transition:all .25s}
+  .mapmark:hover .mm-dot{transform:rotate(45deg) scale(1.5);background:#a8431f}
+  .mapmark:hover .mm-name{color:#241a0e;letter-spacing:.2em}
+  .mapmark.here .mm-dot{background:#d4b86a;border-color:#8a6b2c;
+    animation:herepulse 1.8s ease-in-out infinite}
+  @keyframes herepulse{
+    0%,100%{box-shadow:0 0 0 0 rgba(212,184,106,.55)}
+    50%{box-shadow:0 0 0 9px rgba(212,184,106,0)}}
+  #mapclose{position:absolute;top:26px;right:30px;width:34px;height:34px;z-index:3;
+    display:flex;align-items:center;justify-content:center;cursor:pointer;
+    color:#4a3a26;font-size:17px;border:1px solid rgba(74,58,38,.5);border-radius:50%;
+    transition:all .25s;font-family:Georgia,serif}
+  #mapclose:hover{background:rgba(74,58,38,.14);transform:rotate(90deg)}
 </style>
 </head>
 <body>
@@ -121,10 +155,11 @@
   <div id="regionlabel"><div class="rl-name"></div><div class="rl-sub"></div></div>
   <div id="nav"></div>
   <div id="hint">
-    <b>1–0</b> travel &nbsp; <b>T</b> grand tour &nbsp; <b>F</b> free flight<br/>
+    <b>M</b> map &nbsp; <b>1–0</b> travel &nbsp; <b>T</b> grand tour &nbsp; <b>F</b> free flight<br/>
     <b>drag</b> look &nbsp; <b>W A S D</b> fly &nbsp; <b>shift</b> speed &nbsp; <b>H</b> hide
   </div>
   <div id="actions">
+    <button id="btn-map">Map</button>
     <button id="btn-tour">Begin the Tour</button>
     <button id="btn-fly">Free Flight</button>
   </div>

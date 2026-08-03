@@ -3,6 +3,7 @@
 import * as THREE from 'three';
 import { makePost } from './engine/post.js';
 import { ShotPlayer, FreeFly } from './engine/cinematics.js';
+import { initMap } from './ui/map.js';
 
 import shire from './regions/shire.js';
 import bree from './regions/bree.js';
@@ -155,10 +156,22 @@ function setFly(on){
     if (active) shots.play(active.shots[shotIndex % active.shots.length]);
   }
 }
+const worldMap = initMap({
+  regions: REGIONS,
+  getCurrent: () => activeDef ? activeDef.id : REGIONS[0].id,
+  goto: (id) => {
+    const idx = REGIONS.findIndex(r => r.id === id);
+    if (idx < 0) return;
+    stopTour(); setFly(false);
+    gotoRegion(idx);
+  },
+});
+$('#btn-map').addEventListener('click', () => worldMap.toggle());
 $('#btn-tour').addEventListener('click', () => tourRunning ? stopTour() : runTour());
 $('#btn-fly').addEventListener('click', () => setFly(!fly.enabled));
 
 window.addEventListener('keydown', (e) => {
+  if (worldMap.isOpen() && e.code !== 'KeyM' && e.code !== 'Escape') return;
   if (e.code.startsWith('Digit')){
     const n = (parseInt(e.code.slice(5), 10) + 9) % 10;
     stopTour(); setFly(false);
@@ -232,6 +245,14 @@ window.ME = {
     if (active){ active.update(clockT, 0); post.update(clockT, 0.016); post.render(); }
   },
   hideHud(v = true){ document.body.classList.toggle('hidehud', v); },
+  setCam(px2, py2, pz2, lx, ly, lz){
+    stopTour(); fly.enabled = false; mode = 'free';
+    shots.playing = false;
+    camera.position.set(px2, py2, pz2);
+    camera.lookAt(lx, ly, lz);
+  },
+  showMap(v = true){ v ? worldMap.show() : worldMap.hide(); },
+  heightAt(x, z){ return active && active.heightAt ? active.heightAt(x, z) : 0; },
   letterbox(v = true){ document.body.classList.toggle('letterbox', v); },
 };
 
