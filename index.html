@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1"/>
+<title>Middle-earth — A Living World</title>
+<style>
+  :root{
+    --gold:#d4b86a; --parchment:#e8ddc0;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{width:100%;height:100%;overflow:hidden;background:#000;
+    font-family:Georgia,'Times New Roman',serif;color:var(--parchment)}
+  #app{position:fixed;inset:0}
+  canvas{display:block}
+
+  /* ---- cinematic letterbox ---- */
+  .bar{position:fixed;left:0;right:0;height:0;background:#000;z-index:20;
+    transition:height 1.2s cubic-bezier(.6,0,.3,1);pointer-events:none}
+  #bar-top{top:0}#bar-bot{bottom:0}
+  body.letterbox #bar-top,body.letterbox #bar-bot{height:6.5vh}
+
+  /* ---- title card ---- */
+  #titlecard{position:fixed;inset:0;display:flex;flex-direction:column;
+    align-items:center;justify-content:center;z-index:30;pointer-events:none;
+    opacity:0;transition:opacity 1.6s ease}
+  #titlecard.show{opacity:1}
+  body.hidehud #titlecard{opacity:0 !important}
+  #titlecard .tc-name{font-size:clamp(28px,5vw,64px);letter-spacing:.42em;
+    text-indent:.42em;color:var(--parchment);text-transform:uppercase;
+    text-shadow:0 0 26px rgba(0,0,0,.85),0 2px 10px rgba(0,0,0,.9);font-weight:400}
+  #titlecard .tc-sub{margin-top:14px;font-style:italic;font-size:clamp(12px,1.5vw,19px);
+    letter-spacing:.22em;text-indent:.22em;color:#c9b98f;opacity:.85;
+    text-shadow:0 1px 8px rgba(0,0,0,.9)}
+  #titlecard .tc-rule{width:min(320px,40vw);height:1px;margin-top:22px;
+    background:linear-gradient(90deg,transparent,var(--gold),transparent);opacity:.7}
+
+  /* ---- fade veil ---- */
+  #veil{position:fixed;inset:0;background:#000;z-index:40;opacity:1;
+    transition:opacity 1.4s ease;pointer-events:none}
+  #veil.clear{opacity:0}
+
+  /* ---- loading ---- */
+  #loader{position:fixed;inset:0;z-index:50;background:radial-gradient(ellipse at center,#101010 0%,#000 75%);
+    display:flex;flex-direction:column;align-items:center;justify-content:center;gap:26px;
+    transition:opacity 1s ease}
+  #loader.gone{opacity:0;pointer-events:none}
+  #loader .ring{font-size:clamp(22px,3.2vw,40px);letter-spacing:.5em;text-indent:.5em;
+    color:var(--gold);text-transform:uppercase}
+  #loader .sub{font-style:italic;letter-spacing:.25em;text-indent:.25em;color:#8f8468;font-size:14px}
+  #loader .lbar{width:min(300px,50vw);height:2px;background:#221e14;overflow:hidden}
+  #loader .lbar i{display:block;height:100%;width:0%;background:var(--gold);transition:width .3s}
+
+  /* ---- HUD ---- */
+  #hud{position:fixed;inset:0;z-index:25;pointer-events:none;
+    opacity:1;transition:opacity .8s}
+  body.hidehud #hud{opacity:0}
+  #regionlabel{position:fixed;bottom:3.2vh;left:50%;transform:translateX(-50%);
+    text-align:center;pointer-events:none}
+  #regionlabel .rl-name{font-size:15px;letter-spacing:.4em;text-indent:.4em;
+    text-transform:uppercase;color:rgba(232,221,192,.9);text-shadow:0 1px 6px #000}
+  #regionlabel .rl-sub{font-size:11px;font-style:italic;letter-spacing:.2em;
+    color:rgba(201,185,143,.65);margin-top:4px;text-shadow:0 1px 6px #000}
+
+  /* ---- region nav ---- */
+  #nav{position:fixed;left:18px;top:50%;transform:translateY(-50%);
+    display:flex;flex-direction:column;gap:9px;pointer-events:auto}
+  #nav button{display:flex;align-items:center;gap:10px;background:none;border:0;
+    cursor:pointer;color:rgba(232,221,192,.55);font-family:inherit;padding:2px 4px;
+    transition:color .3s}
+  #nav button .dot{width:7px;height:7px;border:1px solid rgba(212,184,106,.55);
+    transform:rotate(45deg);transition:all .3s;background:transparent;flex:none}
+  #nav button .nm{font-size:10.5px;letter-spacing:.24em;text-transform:uppercase;
+    opacity:0;transform:translateX(-6px);transition:all .3s;text-shadow:0 1px 4px #000}
+  #nav:hover button .nm{opacity:.8;transform:none}
+  #nav button:hover{color:#fff}
+  #nav button.active .dot{background:var(--gold);border-color:var(--gold);
+    box-shadow:0 0 8px rgba(212,184,106,.8)}
+  #nav button.active{color:var(--parchment)}
+  #nav button.active .nm{opacity:1;transform:none}
+
+  /* ---- controls hint ---- */
+  #hint{position:fixed;right:22px;bottom:2.6vh;text-align:right;font-size:11px;
+    letter-spacing:.14em;color:rgba(232,221,192,.5);text-shadow:0 1px 4px #000;
+    pointer-events:none;line-height:1.9}
+  #hint b{color:rgba(212,184,106,.85);font-weight:400}
+
+  /* ---- top actions ---- */
+  #actions{position:fixed;top:2.4vh;right:22px;display:flex;gap:14px;pointer-events:auto}
+  #actions button{background:rgba(10,10,8,.35);border:1px solid rgba(212,184,106,.35);
+    color:rgba(232,221,192,.85);font-family:inherit;font-size:11px;letter-spacing:.22em;
+    text-indent:.22em;text-transform:uppercase;padding:8px 16px;cursor:pointer;
+    backdrop-filter:blur(4px);transition:all .3s}
+  #actions button:hover{border-color:var(--gold);color:#fff;background:rgba(30,26,14,.5)}
+  #actions button.on{background:rgba(212,184,106,.16);border-color:var(--gold);color:var(--gold)}
+
+  #brand{position:fixed;top:2.6vh;left:22px;pointer-events:none}
+  #brand .b1{font-size:13px;letter-spacing:.5em;text-transform:uppercase;color:rgba(212,184,106,.8);
+    text-shadow:0 1px 6px #000}
+  #brand .b2{font-size:9.5px;font-style:italic;letter-spacing:.28em;color:rgba(232,221,192,.4);
+    margin-top:3px}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<div id="bar-top" class="bar"></div>
+<div id="bar-bot" class="bar"></div>
+
+<div id="titlecard">
+  <div class="tc-name"></div>
+  <div class="tc-rule"></div>
+  <div class="tc-sub"></div>
+</div>
+<div id="veil"></div>
+
+<div id="hud">
+  <div id="brand">
+    <div class="b1">Middle-earth</div>
+    <div class="b2">a living world</div>
+  </div>
+  <div id="regionlabel"><div class="rl-name"></div><div class="rl-sub"></div></div>
+  <div id="nav"></div>
+  <div id="hint">
+    <b>1–0</b> travel &nbsp; <b>T</b> grand tour &nbsp; <b>F</b> free flight<br/>
+    <b>drag</b> look &nbsp; <b>W A S D</b> fly &nbsp; <b>shift</b> speed &nbsp; <b>H</b> hide
+  </div>
+  <div id="actions">
+    <button id="btn-tour">Begin the Tour</button>
+    <button id="btn-fly">Free Flight</button>
+  </div>
+</div>
+
+<div id="loader">
+  <div class="ring">Middle-earth</div>
+  <div class="lbar"><i id="lfill"></i></div>
+  <div class="sub">the road goes ever on and on</div>
+</div>
+
+<script type="importmap">
+{
+  "imports": {
+    "three": "./vendor/three.module.js",
+    "three/addons/": "./vendor/"
+  }
+}
+</script>
+<script type="module" src="./js/main.js"></script>
+</body>
+</html>
