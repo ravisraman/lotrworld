@@ -97,6 +97,7 @@ export function makeSky(opts = {}){
   const mesh = new THREE.Mesh(new THREE.SphereGeometry(o.radius, 48, 32), mat);
   mesh.frustumCulled = false;
   mesh.renderOrder = -100;
+  mesh.userData.isSky = true; // main.js bakes the IBL environment from this dome
   return {
     mesh, uniforms,
     update(t){ uniforms.uTime.value = t; },

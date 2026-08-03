@@ -55,6 +55,39 @@ const rlName = $('#regionlabel .rl-name'), rlSub = $('#regionlabel .rl-sub');
 const loader = $('#loader'), lfill = $('#lfill');
 
 // ------------------------------------------------------------- lifecycle ---
+const pmrem = new THREE.PMREMGenerator(renderer);
+
+// Bake an IBL environment from the region's own sky dome so every PBR
+// surface — armor, helms, wet stone, skin — picks up sky-colored ambient
+// and reflections instead of reading flat under direct light alone.
+function enhanceRegion(r){
+  let skyMesh = null;
+  r.scene.traverse(o => { if (!skyMesh && o.userData.isSky) skyMesh = o; });
+  if (skyMesh){
+    const envScene = new THREE.Scene();
+    const proxy = new THREE.Mesh(skyMesh.geometry, skyMesh.material);
+    proxy.frustumCulled = false;
+    envScene.add(proxy);
+    r.scene.environment = pmrem.fromScene(envScene, 0, 1, 5000).texture;
+  }
+  const maxAniso = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  r.scene.traverse(o => {
+    if (o.isDirectionalLight && o.castShadow){
+      o.shadow.normalBias = Math.max(o.shadow.normalBias, 0.025);
+    }
+    if (!o.isMesh) return;
+    for (const m of Array.isArray(o.material) ? o.material : [o.material]){
+      if (!m) continue;
+      // the direct rigs are tuned already; env is ambient seasoning, not key
+      if (m.isMeshStandardMaterial) m.envMapIntensity = 0.35;
+      if (m.map && m.map.anisotropy < maxAniso){
+        m.map.anisotropy = maxAniso;
+        m.map.needsUpdate = true;
+      }
+    }
+  });
+}
+
 async function buildRegion(def){
   if (built.has(def.id)) return built.get(def.id);
   lfill.style.width = '30%';
@@ -70,6 +103,7 @@ async function buildRegion(def){
       }
     }
   }
+  enhanceRegion(r);
   built.set(def.id, r);
   lfill.style.width = '90%';
   await nextFrame();
