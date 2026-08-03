@@ -281,7 +281,7 @@ export default {
     bench.castShadow = true;
     scene.add(bench);
     const elder = makePerson({ height: 1.05, bulk: 1.2, skin: 0xd8b498, hair: 0xc9c2b2, hairLen: 0.4, tunic: 0x7a5c34, pose: 'sit', prop: 'pipe' });
-    elder.position.set(8.5, heightAt(8.5, 24) + 0.28, 24);
+    elder.position.set(8.5, heightAt(8.5, 24) + 0.3, 24.22);
     elder.rotation.y = -0.6;
     crowd.idle(elder); scene.add(elder);
     const pipeSmoke = makeSmoke(scene, { x: 8.5, y: heightAt(8.5, 24) + 1.3, z: 24.3, count: 6, rise: 2.4, spread: 0.4, opacity: 0.18, size: 0.5, speed: 0.3 });

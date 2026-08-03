@@ -6,10 +6,10 @@
 const PLACES = [
   { id: 'shire',       x: 0.155, y: 0.30, icon: 'hill',     label: 'The Shire' },
   { id: 'bree',        x: 0.295, y: 0.275, icon: 'town',    label: 'Bree' },
-  { id: 'rivendell',   x: 0.455, y: 0.225, icon: 'vale',    label: 'Rivendell' },
-  { id: 'caradhras',   x: 0.475, y: 0.345, icon: 'peak',    label: 'Caradhras' },
-  { id: 'moria',       x: 0.465, y: 0.435, icon: 'gate',    label: 'Moria' },
-  { id: 'lothlorien',  x: 0.565, y: 0.475, icon: 'wood',    label: 'Lothlórien' },
+  { id: 'rivendell',   x: 0.455, y: 0.225, icon: 'vale',    label: 'Rivendell', side: 'right' },
+  { id: 'caradhras',   x: 0.475, y: 0.345, icon: 'peak',    label: 'Caradhras', side: 'right' },
+  { id: 'moria',       x: 0.465, y: 0.435, icon: 'gate',    label: 'Moria', side: 'left' },
+  { id: 'lothlorien',  x: 0.565, y: 0.475, icon: 'wood',    label: 'Lothlórien', side: 'right' },
   { id: 'isengard',    x: 0.415, y: 0.615, icon: 'tower',   label: 'Isengard' },
   { id: 'rohan',       x: 0.545, y: 0.675, icon: 'hall',    label: 'Edoras' },
   { id: 'minastirith', x: 0.645, y: 0.795, icon: 'city',    label: 'Minas Tirith' },
@@ -30,27 +30,65 @@ function mulberry(seed){
 }
 
 // ---- ink glyphs ------------------------------------------------------------
-function inkMountain(g, x, y, s, r){
-  // a little caret peak with a shadow stroke on its east face
-  g.strokeStyle = INK; g.lineWidth = Math.max(1, s * 0.09); g.lineCap = 'round';
+function inkMountain(g, x, y, s, r, rot = 0){
+  // a drawn peak: varied silhouette, tilted, hachured on the shade side
+  g.save();
+  g.translate(x, y);
+  g.rotate(rot);
+  const apexX = (r() - 0.5) * s * 0.3;
+  const apexY = -s * (0.55 + r() * 0.4);
+  g.strokeStyle = INK; g.lineWidth = Math.max(1, s * (0.07 + r() * 0.05)); g.lineCap = 'round';
   g.beginPath();
-  g.moveTo(x - s * 0.55, y + s * 0.32);
-  g.quadraticCurveTo(x - s * 0.1, y - s * 0.62 - r() * s * 0.3, x + s * 0.08, y - s * 0.28);
-  g.quadraticCurveTo(x + s * 0.3, y - s * 0.02, x + s * 0.55, y + s * 0.32);
+  g.moveTo(-s * (0.45 + r() * 0.25), s * 0.3);
+  g.quadraticCurveTo(apexX - s * 0.18, apexY * 0.55, apexX, apexY);
+  g.quadraticCurveTo(apexX + s * 0.12, apexY * 0.4 + (r() - 0.5) * s * 0.2, s * (0.45 + r() * 0.25), s * 0.3);
   g.stroke();
-  g.strokeStyle = INK_SOFT; g.lineWidth = Math.max(1, s * 0.07);
-  g.beginPath();
-  g.moveTo(x + s * 0.02, y - s * 0.3);
-  g.lineTo(x + s * 0.2, y + s * 0.22);
-  g.stroke();
+  // hachure strokes on the south-east face
+  g.strokeStyle = INK_SOFT; g.lineWidth = 1;
+  const nH = 2 + (r() * 2 | 0);
+  for (let i = 0; i < nH; i++){
+    const t = (i + 1) / (nH + 1);
+    g.beginPath();
+    g.moveTo(apexX + t * s * 0.28, apexY + t * (s * 0.3 - apexY) * 0.9);
+    g.lineTo(apexX + t * s * 0.5, s * 0.26);
+    g.stroke();
+  }
+  g.restore();
+}
+// a ridge of peaks along a curved spine — never a stamped row
+function inkRange(g, r, pts, base){
+  for (let i = 0; i < pts.length - 1; i++){
+    const t = i / (pts.length - 1);
+    const [x0, y0] = pts[i], [x1, y1] = pts[i + 1];
+    const rot = Math.atan2(y1 - y0, x1 - x0) * 0.35;
+    const n = 1 + (r() * 2 | 0);
+    for (let k = 0; k < n; k++){
+      inkMountain(g,
+        x0 + (x1 - x0) * (k / n) + (r() - 0.5) * base * 0.7,
+        y0 + (y1 - y0) * (k / n) + (r() - 0.5) * base * 0.55,
+        base * (0.65 + r() * 0.7), r, rot + (r() - 0.5) * 0.2);
+    }
+  }
 }
 function inkTree(g, x, y, s, r){
-  g.strokeStyle = INK_SOFT; g.lineWidth = Math.max(1, s * 0.1);
-  g.beginPath(); g.moveTo(x, y + s * 0.4); g.lineTo(x, y + s * 0.05); g.stroke();
-  g.fillStyle = 'rgba(96,108,64,0.55)';
-  g.beginPath(); g.arc(x, y - s * 0.15, s * 0.42 * (0.8 + r() * 0.4), 0, Math.PI * 2); g.fill();
-  g.strokeStyle = INK_FAINT; g.lineWidth = 1;
-  g.beginPath(); g.arc(x, y - s * 0.15, s * 0.42, 0.4, Math.PI * 1.2); g.stroke();
+  const cr = s * 0.42 * (0.8 + r() * 0.4);
+  // green wash under an ink outline, cartographic style
+  g.fillStyle = 'rgba(104,116,70,0.45)';
+  g.beginPath(); g.arc(x, y - s * 0.15, cr, 0, Math.PI * 2); g.fill();
+  g.strokeStyle = INK; g.lineWidth = Math.max(0.8, s * 0.06);
+  g.beginPath();
+  // slightly lumpy crown outline
+  for (let i = 0; i <= 8; i++){
+    const a = (i / 8) * Math.PI * 2;
+    const rr = cr * (0.9 + Math.sin(a * 3 + s) * 0.12);
+    const pxx = x + Math.cos(a) * rr, pyy = y - s * 0.15 + Math.sin(a) * rr;
+    i === 0 ? g.moveTo(pxx, pyy) : g.lineTo(pxx, pyy);
+  }
+  g.closePath(); g.stroke();
+  // trunk tick + ground stroke
+  g.beginPath(); g.moveTo(x, y + s * 0.42); g.lineTo(x, y + cr * 0.2); g.stroke();
+  g.strokeStyle = INK_FAINT;
+  g.beginPath(); g.moveTo(x - s * 0.22, y + s * 0.42); g.lineTo(x + s * 0.22, y + s * 0.42); g.stroke();
 }
 
 export function initMap(opts){
@@ -115,32 +153,41 @@ export function initMap(opts){
 
     // ------- geography (a stylized fan-chart, drawn from scratch) ----------
     // the great north–south mountain spine
-    const spine = [];
-    for (let i = 0; i <= 16; i++){
-      const t = i / 16;
-      spine.push([px(0.52 - Math.sin(t * 2.6) * 0.06 - t * 0.04), py(0.175 + t * 0.44)]);
-    }
-    for (let i = 0; i < spine.length; i++){
-      const [sx, sy] = spine[i];
-      for (let k = 0; k < 3; k++){
-        inkMountain(g, sx + (k - 1) * 16 + (r() - 0.5) * 10, sy + (r() - 0.5) * 8, 13 + r() * 7, r);
+    {
+      const spine = [];
+      for (let i = 0; i <= 14; i++){
+        const t = i / 14;
+        spine.push([px(0.52 - Math.sin(t * 2.6) * 0.06 - t * 0.04 + (r() - 0.5) * 0.012), py(0.185 + t * 0.42)]);
       }
+      inkRange(g, r, spine, 15);
+      const spine2 = spine.map(([x2, y2]) => [x2 + 17, y2 + 9]);
+      inkRange(g, r, spine2, 11);
     }
-    // the southern range, west–east
-    for (let i = 0; i <= 12; i++){
-      const t = i / 12;
-      const sx = px(0.34 + t * 0.34), sy = py(0.72 + Math.sin(t * 2.4) * 0.025);
-      inkMountain(g, sx, sy, 12 + r() * 6, r);
-      if (r() > 0.5) inkMountain(g, sx + 8, sy + 10, 9 + r() * 5, r);
+    // the southern range — a curved wall west–east
+    {
+      const ridge = [];
+      for (let i = 0; i <= 10; i++){
+        const t = i / 10;
+        ridge.push([px(0.33 + t * 0.35), py(0.715 + Math.sin(t * 2.9 + 0.4) * 0.03 + (r() - 0.5) * 0.015)]);
+      }
+      inkRange(g, r, ridge, 13);
     }
-    // Mordor's fences — a box of crags opening west
-    for (let i = 0; i <= 9; i++){
-      const t = i / 9;
-      inkMountain(g, px(0.70 + t * 0.20), py(0.635 + Math.sin(t * 2.8) * 0.012), 11 + r() * 5, r);
-      inkMountain(g, px(0.70 + t * 0.20), py(0.865), 11 + r() * 5, r);
-    }
-    for (let i = 0; i <= 5; i++){
-      inkMountain(g, px(0.705), py(0.66 + (i / 5) * 0.18), 10 + r() * 5, r);
+    // Mordor's fences — two arcs of crag meeting at the northwest corner
+    {
+      const north = [], west = [];
+      for (let i = 0; i <= 8; i++){
+        const t = i / 8;
+        north.push([px(0.705 + t * 0.20), py(0.64 + Math.sin(t * 3.1) * 0.018 + (r() - 0.5) * 0.012)]);
+        west.push([px(0.702 + Math.sin(t * 2.2) * 0.008), py(0.655 + t * 0.2)]);
+      }
+      inkRange(g, r, north, 12);
+      inkRange(g, r, west, 11);
+      const south = [];
+      for (let i = 0; i <= 8; i++){
+        const t = i / 8;
+        south.push([px(0.705 + t * 0.20), py(0.862 + (r() - 0.5) * 0.014)]);
+      }
+      inkRange(g, r, south, 12);
     }
     // fire glyph at Orodruin
     {
@@ -164,21 +211,37 @@ export function initMap(opts){
       }
     }
 
-    // rivers
-    g.strokeStyle = WATER; g.lineWidth = 3.2; g.lineCap = 'round';
-    const river = (pts) => {
-      g.beginPath();
-      g.moveTo(px(pts[0][0]), py(pts[0][1]));
-      for (let i = 1; i < pts.length - 1; i++){
-        const xc = (px(pts[i][0]) + px(pts[i + 1][0])) / 2;
-        const yc = (py(pts[i][1]) + py(pts[i + 1][1])) / 2;
-        g.quadraticCurveTo(px(pts[i][0]), py(pts[i][1]), xc, yc);
+    // rivers — tapering dark-ink lines with a hand wobble
+    const river = (pts, w0, w1) => {
+      // resample the polyline smoothly, then stroke in segments with growing width
+      const P = pts.map(([nx, ny]) => [px(nx), py(ny)]);
+      const seg = 46;
+      const pt = (t) => {
+        const f = t * (P.length - 1), i = Math.min(P.length - 2, f | 0), u = f - i;
+        const a = P[Math.max(0, i - 1)], b = P[i], c = P[i + 1], d = P[Math.min(P.length - 1, i + 2)];
+        const cr = (p0, p1, p2, p3) =>
+          0.5 * ((2 * p1) + (-p0 + p2) * u + (2 * p0 - 5 * p1 + 4 * p2 - p3) * u * u + (-p0 + 3 * p1 - 3 * p2 + p3) * u * u * u);
+        return [cr(a[0], b[0], c[0], d[0]), cr(a[1], b[1], c[1], d[1])];
+      };
+      g.strokeStyle = 'rgba(74,84,96,0.7)'; g.lineCap = 'round';
+      let prev = pt(0);
+      for (let i = 1; i <= seg; i++){
+        const t = i / seg;
+        const [cx2, cy2] = pt(t);
+        const wob = Math.sin(t * 26 + P[0][0]) * 1.1;
+        g.lineWidth = w0 + (w1 - w0) * t;
+        g.beginPath();
+        g.moveTo(prev[0], prev[1]);
+        g.lineTo(cx2 + wob * 0.4, cy2 + wob * 0.3);
+        g.stroke();
+        prev = [cx2 + wob * 0.4, cy2 + wob * 0.3];
       }
-      g.stroke();
     };
-    river([[0.56, 0.10], [0.585, 0.3], [0.61, 0.45], [0.6, 0.6], [0.63, 0.72], [0.665, 0.86], [0.62, 0.97]]);
-    river([[0.44, 0.26], [0.38, 0.3], [0.3, 0.33], [0.2, 0.35], [0.08, 0.38]]);
-    river([[0.42, 0.63], [0.5, 0.68], [0.56, 0.73], [0.6, 0.78]]);
+    // the Great River rises in the mountains and runs to the southern sea
+    river([[0.575, 0.165], [0.585, 0.3], [0.61, 0.45], [0.6, 0.6], [0.63, 0.72], [0.665, 0.86], [0.62, 0.985]], 1.0, 3.6);
+    // the western river flows out to the sea
+    river([[0.455, 0.245], [0.38, 0.3], [0.3, 0.33], [0.2, 0.35], [0.06, 0.4]], 0.9, 2.8);
+    river([[0.425, 0.635], [0.5, 0.68], [0.56, 0.73], [0.605, 0.77]], 0.8, 2.0),
     // the western sea hint
     g.strokeStyle = WATER;
     for (let i = 0; i < 8; i++){
@@ -215,38 +278,84 @@ export function initMap(opts){
     g.strokeStyle = INK_SOFT; g.lineWidth = 1;
     g.beginPath(); g.moveTo(W * 0.32, py(0.13)); g.lineTo(W * 0.68, py(0.13)); g.stroke();
 
-    // compass rose
+    // compass rose — eight slender points, half filled, over a ticked ring
     {
-      const cx = px(0.09), cy = py(0.83), R = Math.min(W, Hh) * 0.052;
+      const cx = px(0.09), cy = py(0.8), R = Math.min(W, Hh) * 0.058;
       g.strokeStyle = INK; g.fillStyle = INK;
-      g.lineWidth = 1.4;
-      g.beginPath(); g.arc(cx, cy, R, 0, Math.PI * 2); g.stroke();
-      g.beginPath(); g.arc(cx, cy, R * 0.62, 0, Math.PI * 2); g.stroke();
-      for (let i = 0; i < 8; i++){
-        const a = (i / 8) * Math.PI * 2;
-        const long = i % 2 === 0;
-        const rr = long ? R * 0.95 : R * 0.55;
+      g.lineWidth = 1.6;
+      g.beginPath(); g.arc(cx, cy, R * 0.98, 0, Math.PI * 2); g.stroke();
+      g.lineWidth = 0.9;
+      g.beginPath(); g.arc(cx, cy, R * 0.84, 0, Math.PI * 2); g.stroke();
+      for (let i = 0; i < 32; i++){
+        const a = (i / 32) * Math.PI * 2;
         g.beginPath();
-        g.moveTo(cx + Math.sin(a) * rr, cy - Math.cos(a) * rr);
-        g.lineTo(cx + Math.sin(a + 0.16) * R * 0.14, cy - Math.cos(a + 0.16) * R * 0.14);
-        g.lineTo(cx + Math.sin(a - 0.16) * R * 0.14, cy - Math.cos(a - 0.16) * R * 0.14);
-        g.closePath();
-        if (long) g.fill(); else g.stroke();
+        g.moveTo(cx + Math.sin(a) * R * 0.84, cy - Math.cos(a) * R * 0.84);
+        g.lineTo(cx + Math.sin(a) * R * (i % 4 === 0 ? 0.72 : 0.78), cy - Math.cos(a) * R * (i % 4 === 0 ? 0.72 : 0.78));
+        g.stroke();
       }
-      g.font = `600 ${R * 0.42}px Georgia, serif`;
+      // long cardinal points (filled half / open half), short intercardinals
+      const point = (a, len, wHalf) => {
+        const tipX = cx + Math.sin(a) * len, tipY = cy - Math.cos(a) * len;
+        const lX = cx + Math.sin(a - Math.PI / 2) * wHalf, lY = cy - Math.cos(a - Math.PI / 2) * wHalf;
+        const rX = cx + Math.sin(a + Math.PI / 2) * wHalf, rY = cy - Math.cos(a + Math.PI / 2) * wHalf;
+        g.beginPath(); g.moveTo(tipX, tipY); g.lineTo(lX, lY); g.lineTo(cx, cy); g.closePath();
+        g.fillStyle = INK; g.fill();
+        g.beginPath(); g.moveTo(tipX, tipY); g.lineTo(rX, rY); g.lineTo(cx, cy); g.closePath();
+        g.fillStyle = 'rgba(238,224,186,0.9)'; g.fill();
+        g.strokeStyle = INK; g.lineWidth = 1; g.stroke();
+      };
+      for (let i = 0; i < 4; i++) point((i / 4) * Math.PI * 2 + Math.PI / 4, R * 0.6, R * 0.1);
+      for (let i = 0; i < 4; i++) point((i / 4) * Math.PI * 2, R * 0.95, R * 0.13);
+      g.fillStyle = INK;
+      g.font = `600 ${R * 0.5}px Georgia, serif`;
       g.textAlign = 'center';
-      g.fillText('N', cx, cy - R * 1.18);
+      g.fillText('N', cx, cy - R * 1.22);
+      g.font = `${R * 0.3}px Georgia, serif`;
+      g.fillText('S', cx, cy + R * 1.42);
+      g.fillText('E', cx + R * 1.32, cy + R * 0.1);
+      g.fillText('W', cx - R * 1.32, cy + R * 0.1);
     }
 
-    // scale bar
-    g.strokeStyle = INK_SOFT; g.lineWidth = 1.4;
-    g.beginPath(); g.moveTo(px(0.72), py(0.935)); g.lineTo(px(0.9), py(0.935)); g.stroke();
-    for (let i = 0; i <= 3; i++){
-      g.beginPath(); g.moveTo(px(0.72 + i * 0.06), py(0.928)); g.lineTo(px(0.72 + i * 0.06), py(0.942)); g.stroke();
+    // the names of the lands, filling the open country in faded italic caps
+    g.fillStyle = 'rgba(74,58,38,0.34)';
+    g.textAlign = 'center';
+    const land = (t, nx, ny, sz) => {
+      g.font = `italic ${Math.max(11, W * sz)}px Georgia, serif`;
+      g.fillText(t.split('').join(' '), px(nx), py(ny));
+    };
+    land('ERIADOR', 0.24, 0.475, 0.016);
+    land('WILDERLAND', 0.76, 0.315, 0.015);
+    land('ROHAN', 0.56, 0.585, 0.015);
+    land('GONDOR', 0.55, 0.845, 0.015);
+    land('MORDOR', 0.815, 0.815, 0.015);
+    g.font = `italic ${Math.max(10, W * 0.011)}px Georgia, serif`;
+    g.fillStyle = 'rgba(80,96,104,0.5)';
+    g.fillText('the  Sundering  Seas', px(0.075), py(0.62));
+
+    // scale bar in a small cartouche
+    {
+      const cx0 = px(0.705), cy0 = py(0.905), cw = px(0.215), chh = py(0.07);
+      g.fillStyle = 'rgba(238,224,186,0.55)';
+      g.fillRect(cx0, cy0, cw, chh);
+      g.strokeStyle = INK_SOFT; g.lineWidth = 1.2;
+      g.strokeRect(cx0, cy0, cw, chh);
+      g.strokeRect(cx0 + 3, cy0 + 3, cw - 6, chh - 6);
+      g.strokeStyle = INK; g.lineWidth = 1.6;
+      const bx = cx0 + cw * 0.1, bw = cw * 0.8, byy = cy0 + chh * 0.42;
+      g.beginPath(); g.moveTo(bx, byy); g.lineTo(bx + bw, byy); g.stroke();
+      for (let i = 0; i < 4; i++){
+        if (i % 2 === 0){
+          g.fillStyle = INK;
+          g.fillRect(bx + (i / 4) * bw, byy - 2.4, bw / 4, 4.8);
+        }
+      }
+      for (let i = 0; i <= 4; i++){
+        g.beginPath(); g.moveTo(bx + (i / 4) * bw, byy - 5); g.lineTo(bx + (i / 4) * bw, byy + 5); g.stroke();
+      }
+      g.fillStyle = INK_SOFT;
+      g.font = `italic ${Math.max(9, W * 0.0088)}px Georgia, serif`;
+      g.fillText('a hundred leagues and more', cx0 + cw / 2, cy0 + chh * 0.82);
     }
-    g.fillStyle = INK_SOFT;
-    g.font = `italic ${Math.max(9, W * 0.009)}px Georgia, serif`;
-    g.fillText('a hundred leagues and more', px(0.81), py(0.958));
   }
 
   // ---- markers -------------------------------------------------------------
@@ -257,7 +366,7 @@ export function initMap(opts){
       const region = regions.find(rg => rg.id === pl.id);
       if (!region) continue;
       const b = document.createElement('button');
-      b.className = 'mapmark' + (current === pl.id ? ' here' : '');
+      b.className = 'mapmark' + (current === pl.id ? ' here' : '') + (pl.side ? ' lab-' + pl.side : '');
       b.style.left = (pl.x * 100) + '%';
       b.style.top = (pl.y * 100) + '%';
       b.innerHTML = `<span class="mm-dot"></span><span class="mm-name">${pl.label}</span>`;

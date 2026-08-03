@@ -93,7 +93,7 @@ export default {
     sun.shadow.camera.far = 1100;
     sun.shadow.bias = -0.0007;
     scene.add(sun);
-    scene.add(new THREE.HemisphereLight(0xc8d8ec, 0x6d7462, 1.0));
+    scene.add(new THREE.HemisphereLight(0xc8d8ec, 0x8a8878, 1.3));
 
     // ---- the seven-tiered city ----------------------------------------
     const city = new THREE.Group();
@@ -314,7 +314,7 @@ export default {
     // Citadel guards flanking the White Tree — winged helms, black and silver
     for (const [gx, gz, ry] of [[-4, 10, 1.6], [4, 10, -1.6], [0, 4, 0], [-6, 16, 1.2], [6, 16, -1.2]]){
       const guard = Cast.gondorGuard();
-      guard.position.set(gx, topY + 1.7, gz);
+      guard.position.set(gx, topY + 0.8, gz);
       guard.rotation.y = ry;
       crowd.idle(guard); scene.add(guard);
     }
@@ -325,7 +325,7 @@ export default {
       const pts = [];
       for (let k = 0; k <= 8; k++){
         const a = (k / 8) * Math.PI * 2;
-        pts.push([Math.cos(a) * 17, topY + 1.7, Math.sin(a) * 17]);
+        pts.push([Math.cos(a) * 17, topY + 0.8, Math.sin(a) * 17]);
       }
       crowd.walk(patrol, pts, { speed: 1.0, loop: 'loop', closed: true, fly: true });
     }

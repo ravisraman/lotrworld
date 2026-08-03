@@ -110,6 +110,28 @@ function headMat(skin){
   }
   return HEAD_CACHE.get(skin);
 }
+let SHADOW_TEX = null;
+export function makeContactShadow(radius){
+  if (!SHADOW_TEX){
+    const cv = document.createElement('canvas');
+    cv.width = cv.height = 64;
+    const g = cv.getContext('2d');
+    const grad = g.createRadialGradient(32, 32, 4, 32, 32, 31);
+    grad.addColorStop(0, 'rgba(0,0,0,0.42)');
+    grad.addColorStop(0.7, 'rgba(0,0,0,0.16)');
+    grad.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = grad; g.fillRect(0, 0, 64, 64);
+    SHADOW_TEX = new THREE.CanvasTexture(cv);
+  }
+  const m = new THREE.Mesh(
+    new THREE.CircleGeometry(radius, 16),
+    new THREE.MeshBasicMaterial({ map: SHADOW_TEX, transparent: true, depthWrite: false }));
+  m.rotation.x = -Math.PI / 2;
+  m.position.y = 0.025;
+  m.renderOrder = 1;
+  return m;
+}
+
 function capsule(r, len, material, rs = 10){
   const m = new THREE.Mesh(new THREE.CapsuleGeometry(r, len, 4, rs), material);
   m.castShadow = true;
@@ -397,10 +419,14 @@ export function makePerson(cfg = {}){
       const v = p.getY(i) / (H * 0.58) + 0.5;
       p.setZ(i, -(1 - v) * H * 0.085 - Math.abs(u - 0.5) ** 2 * H * 0.12);
       p.setX(i, p.getX(i) * (1 + (1 - v) * 0.32));
+      // slope the top edge down toward the shoulders — never a flat card
+      if (v > 0.8){
+        p.setY(i, p.getY(i) - Math.abs(u - 0.5) ** 1.5 * H * 0.22 * ((v - 0.8) / 0.2));
+      }
     }
     cloakMesh.geometry.computeVertexNormals();
     cloakMesh.castShadow = true;
-    cloakMesh.position.set(0, torsoH * 0.7, -shoulderW * 0.3);
+    cloakMesh.position.set(0, torsoH * 0.64, -shoulderW * 0.3);
     cloakMesh.rotation.x = 0.12;
     body.add(cloakMesh);
     // clasp
@@ -449,12 +475,13 @@ export function makePerson(cfg = {}){
     body.add(prop); prop = null;
   } else if (c.prop === 'lantern'){
     prop = new THREE.Group();
-    const cage = box(0.1, 0.14, 0.1, metal(0x6a6258));
-    const lite = sph(0.045, mat(0xffe8b0, { emissive: 0xffc86a, emissiveIntensity: 2.4 }));
-    const light = new THREE.PointLight(0xffc87a, 3.2, 9, 2);
+    const cage = box(0.09, 0.13, 0.09, metal(0x6a6258));
+    const lite = sph(0.04, mat(0xffe8b0, { emissive: 0xffc86a, emissiveIntensity: 2.0 }));
+    const light = new THREE.PointLight(0xffc87a, 2.2, 8, 2);
+    light.position.set(0, 0, 0.16);
     prop.add(cage, lite, light);
-    prop.position.set(0, -armL * 1.05, 0.05);
-    armLG.add(prop); armLG.rotation.x = -0.35;
+    prop.position.set(0, -armL * 1.18, 0.2);
+    armLG.add(prop); armLG.rotation.x = -0.55;
   } else if (c.prop === 'torch'){
     prop = cyl(0.02, 0.028, H * 0.35, woodM, 6);
     const fl = cone(0.06, 0.16, mat(0xffa030, { emissive: 0xff7a20, emissiveIntensity: 3.0 }), 6);
@@ -490,6 +517,7 @@ export function makePerson(cfg = {}){
   }
 
   root.traverse(o => { o.castShadow = true; });
+  root.add(makeContactShadow(H * 0.34));
 
   root.userData.anim = {
     mode: c.pose, phase: Math.random() * 6.28, speedMul: 1,
@@ -507,9 +535,9 @@ export function applyPose(rig, pose){
   a.mode = pose;
   if (pose === 'sit'){
     a.body.position.y = a.legH * 0.55;
-    a.legLG.rotation.x = -1.5; a.legRG.rotation.x = -1.5;
+    a.legLG.rotation.x = -1.35; a.legRG.rotation.x = -1.35;
     a.legLG.position.y = a.legH * 0.55; a.legRG.position.y = a.legH * 0.55;
-    if (a.kneeL){ a.kneeL.rotation.x = 1.45; a.kneeR.rotation.x = 1.45; }
+    if (a.kneeL){ a.kneeL.rotation.x = 1.35; a.kneeR.rotation.x = 1.35; }
   } else if (pose === 'ride'){
     a.legLG.rotation.x = -0.95; a.legRG.rotation.x = -0.95;
     a.legLG.rotation.z = 0.35; a.legRG.rotation.z = -0.35;
@@ -629,6 +657,7 @@ export function makeHorse(cfg = {}){
     g.add(lg);
   }
   g.traverse(o => { o.castShadow = true; });
+  g.add(makeContactShadow(1.35));
   g.userData.anim = { legs, body, headG, phase: Math.random() * 6.28 };
   g.userData.mount = new THREE.Group();
   g.userData.mount.position.set(0.05, 1.72, 0);

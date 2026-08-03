@@ -119,8 +119,13 @@
     background:#7d2f1d;border:1.5px solid #4a3a26;transform:rotate(45deg);
     transition:all .25s;box-shadow:0 1px 3px rgba(60,40,20,.5)}
   .mapmark .mm-name{display:block;margin-top:7px;font-size:13px;letter-spacing:.14em;
-    color:#4a3a26;white-space:nowrap;text-shadow:0 1px 0 rgba(238,224,186,.8);
-    transition:all .25s}
+    color:#3a2c1a;white-space:nowrap;transition:all .25s;
+    text-shadow:0 0 4px rgba(238,224,186,1),0 0 7px rgba(238,224,186,1),
+      1px 1px 0 rgba(238,224,186,.95),-1px -1px 0 rgba(238,224,186,.95),
+      1px -1px 0 rgba(238,224,186,.95),-1px 1px 0 rgba(238,224,186,.95)}
+  .mapmark.lab-left .mm-name{position:absolute;right:100%;top:8px;margin:0 2px 0 0}
+  .mapmark.lab-right .mm-name{position:absolute;left:100%;top:8px;margin:0 0 0 2px}
+  .mapmark.lab-top .mm-name{position:absolute;bottom:100%;left:50%;transform:translateX(-50%);margin:0 0 2px}
   .mapmark:hover .mm-dot{transform:rotate(45deg) scale(1.5);background:#a8431f}
   .mapmark:hover .mm-name{color:#241a0e;letter-spacing:.2em}
   .mapmark.here .mm-dot{background:#d4b86a;border-color:#8a6b2c;

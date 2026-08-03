@@ -78,7 +78,7 @@ export default {
     moon.shadow.camera.left = -90; moon.shadow.camera.right = 90;
     moon.shadow.camera.top = 90; moon.shadow.camera.bottom = -90;
     scene.add(moon);
-    scene.add(new THREE.HemisphereLight(0x3c4a6a, 0x181410, 1.3));
+    scene.add(new THREE.HemisphereLight(0x40507a, 0x1c1812, 1.5));
 
     // ---- the town ------------------------------------------------------
     const housesCfg = [
@@ -252,7 +252,7 @@ export default {
     const benchB = new THREE.Mesh(new THREE.BoxGeometry(1.8, 0.14, 0.6), mat(0x33281c));
     benchB.position.set(-7.2, 0.65, -12.5);
     scene.add(benchB);
-    strider.position.set(-7.2, 0.42, -12.5);
+    strider.position.set(-7.2, 0.26, -12.35);
     strider.rotation.y = 0.9;
     applyPose(strider, 'sit');
     crowd.idle(strider); scene.add(strider);

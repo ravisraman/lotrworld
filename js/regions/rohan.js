@@ -310,13 +310,14 @@ export default {
 
     // Éowyn before the hall doors, dress and hair in the wind
     const eowyn = Cast.eowyn({ robe: 0xd8cdb8 });
-    eowyn.position.set(1.5, hallY + 1.2, -16.5);
+    eowyn.position.set(1.5, hallY + 1.2, -9.6);
     eowyn.rotation.y = Math.PI;
     crowd.idle(eowyn); scene.add(eowyn);
     for (const s2 of [-1, 1]){
       const warden = Cast.rohirrim({ pose: 'guard' });
-      warden.position.set(s2 * 4.2, hallY + 1.2, -11.2);
-      warden.rotation.y = Math.PI;
+      warden.position.set(s2 * 4.6, hallY + 1.2, -11.2);
+      warden.rotation.y = Math.PI + s2 * 0.14;
+      warden.userData.anim.phase = s2 * 2.2;
       crowd.idle(warden); scene.add(warden);
     }
 
