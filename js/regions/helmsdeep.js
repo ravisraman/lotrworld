@@ -23,6 +23,9 @@ import { sweep, battlements, texBox, latheTower, mergeUV } from '../engine/forti
 const Y_B = 31;      // the Hornburg's courtyard, on top of the Hornrock
 const Y_TOP = 21;    // walkway of the Deeping Wall
 const HR = { cx: 100, cz: -28, rx: 46, rz: 48 };   // the Hornrock (superellipse)
+// the great hall, cut into the cliff behind the Hornburg (front at x0)
+const HALL = { x0: 143, x1: 186, z0: -46, z1: 6, floor: Y_B + 4, thick: 3 };
+const inHall = (x, z, m = 0) => x > HALL.x0 + HALL.thick - m && x < HALL.x1 + 1.5 + m && z > HALL.z0 - 1.5 - m && z < HALL.z1 + 1.5 + m;
 
 // the Deeping Stream, from the caves, out through the culvert, down the coomb
 const STREAM = [[4, 470], [-6, 330], [-18, 190], [-26, 80], [-30, 8], [-31, -30],
@@ -134,6 +137,17 @@ export function heightAt(x, z){
     h = Math.max(h, lerp(h, Y_B, k));
     if (hr < 0.97) h = Y_B;
   }
+  // the rock is hollowed for the great hall: a shelf just above its roof
+  if (inHall(x, z, 10)){
+    const shelf = HALL.floor + 25.6;
+    // distance outside the hall's footprint; the shelf blends out over 10 m
+    const ex = Math.max(HALL.x0 + HALL.thick - x, x - HALL.x1 - 1.5, 0);
+    const ez = Math.max(HALL.z0 - 1.5 - z, z - HALL.z1 - 1.5, 0);
+    const k = smoothstep(10, 0, Math.hypot(ex, ez));
+    // inside the footprint the ground is exactly the roof shelf (never between
+    // floor and ceiling); outside it only comes down to meet it
+    if (k >= 1) h = shelf; else if (h > shelf) h = lerp(h, shelf, k);
+  }
   return h;
 }
 
@@ -146,7 +160,9 @@ function buildTerrain(size, res, cx, cz, ground, sinkInner){
   for (let i = 0; i < N; i++){
     const x = pos.getX(i) + cx, z = pos.getZ(i) + cz;
     let y = heightAt(x, z);
-    if (sinkInner && sinkInner(x, z)) y -= 8;
+    // the coarse outer ground is dropped well below wherever the fine terrain
+    // covers it, so its long triangles can never cut through anything
+    if (sinkInner && sinkInner(x, z)) y -= 400;
     pos.setXYZ(i, x, y, z);
   }
   geo.computeVertexNormals();
@@ -197,6 +213,44 @@ function buildTerrain(size, res, cx, cz, ground, sinkInner){
   const mesh = new THREE.Mesh(geo, ground);
   mesh.receiveShadow = true;
   return mesh;
+}
+
+// ------------------------------------------------------------ the gate ----
+// The great doors are carved in rows of hooked, fang-like motifs (as in the
+// films); painted into a canvas so the leaves read at a glance.
+let DOOR_MAT = null;
+function doorCarving(){
+  if (DOOR_MAT) return DOOR_MAT;
+  const cv = document.createElement('canvas'); cv.width = 256; cv.height = 640;
+  const g = cv.getContext('2d');
+  const grd = g.createLinearGradient(0, 0, 256, 0);
+  grd.addColorStop(0, '#2c2016'); grd.addColorStop(0.5, '#3e2e1f'); grd.addColorStop(1, '#2a1f15');
+  g.fillStyle = grd; g.fillRect(0, 0, 256, 640);
+  g.strokeStyle = 'rgba(0,0,0,0.5)'; g.lineWidth = 3;
+  for (let x = 32; x < 256; x += 32){ g.beginPath(); g.moveTo(x, 0); g.lineTo(x, 640); g.stroke(); }   // planks
+  g.strokeStyle = '#1a120c'; g.lineWidth = 10; g.strokeRect(10, 10, 236, 620);
+  // rows of carved hooks: a light ridge over a dark cut gives relief
+  for (let row = 0; row < 7; row++){
+    const y = 70 + row * 82;
+    for (let col = 0; col < 3; col++){
+      const x = 52 + col * 76;
+      for (const [c, o] of [['#120c08', 3], ['#6e5538', 0]]){
+        g.strokeStyle = c; g.lineWidth = 7; g.lineCap = 'round';
+        g.beginPath(); g.moveTo(x - 22 + o, y - 22 + o); g.lineTo(x - 22 + o, y + 10 + o);
+        g.quadraticCurveTo(x - 22 + o, y + 30 + o, x + o, y + 30 + o);
+        g.moveTo(x + 22 + o, y - 22 + o); g.lineTo(x + 22 + o, y + 10 + o);
+        g.quadraticCurveTo(x + 22 + o, y + 30 + o, x + o, y + 30 + o);
+        g.moveTo(x + o, y - 26 + o); g.lineTo(x + o, y + 12 + o);
+        g.stroke();
+      }
+    }
+    g.fillStyle = '#20160e'; g.fillRect(14, y + 44, 228, 8);   // iron band between rows
+  }
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 8;
+  DOOR_MAT = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.85 });
+  return DOOR_MAT;
 }
 
 // ------------------------------------------------------------- flames ----
@@ -460,8 +514,16 @@ export default {
     for (const run of [runA, runB]){
       const sw = sweep(run, curtainProfile, { heightAt, step: 1.5, tile: 5.5 });
       addMesh(sw.geo, burgM);
-      addMesh(mergeUV(battlements(sw.path, { u: -0.4, y: () => Y_B + 10.3, w: 1.9, h: 1.5, d: 1.4, spacing: 3.2 })), burgM);
+      addMesh(mergeUV(battlements(sw.path, { u: -0.4, y: () => Y_B + 10.3, w: 1.9, h: 1.3, d: 1.4, spacing: 3.2, cap: 0.55 })), burgM);
       curtainRuns.push(sw);
+      // arrow slits down the outer face (one merged mesh per run)
+      const n = Math.floor(sw.path.length / 7.5), slits = [];
+      for (let i = 1; i < n; i++){
+        const f = sw.frame(i / n);
+        slits.push(new THREE.PlaneGeometry(0.45, 2.4).rotateY(Math.atan2(f.right.x, f.right.z))
+          .translate(f.p.x + f.right.x * 0.03, Y_B + 5.6 + (i % 2) * 0.6, f.p.z + f.right.z * 0.03));
+      }
+      if (slits.length) scene.add(new THREE.Mesh(mergeUV(slits), darkM));
     }
     // square towers standing out from the front of the curtain
     {
@@ -511,37 +573,162 @@ export default {
       addMesh(mergeUV(geos), burgM);
     }
 
-    // the great hall: an arcaded front built into the cliff at the back
+    const hallLight = { torches: [], shaftM: null, patchM: null };
+    // the great hall: an arcaded front built into the cliff at the back, and
+    // behind it the hall itself — piers and arches, light falling in shafts
+    // from the high windows, torches, trestle tables (after the films' set)
     {
-      const HX = 141, z0 = -46, z1 = 6, W = z1 - z0, zc = (z0 + z1) / 2;
+      const { x0: HX, x1: HXB, z0, z1 } = HALL;
+      const W = z1 - z0, zc = (z0 + z1) / 2, F = HALL.floor;
       const parts = [];
-      parts.push(texBox(10, 4, W + 8, 5).translate(HX - 3, Y_B + 2, zc));            // raised terrace
-      for (let i = 0; i < 8; i++) parts.push(texBox(1.2, 0.5, 10, 3).translate(HX - 8.6 - i * 1.2, Y_B + 0.25 + (7 - i) * 0.5, zc));
-      parts.push(texBox(6, 24, W, 5.5).translate(HX + 5, Y_B + 16, zc));              // the front
-      parts.push(texBox(1.4, 1.2, W + 2, 4).translate(HX + 1.6, Y_B + 28.4, zc));     // cornice
-      parts.push(texBox(1.1, 0.8, W + 1, 4).translate(HX + 1.8, Y_B + 18.6, zc));     // string course
-      for (let i = 0; i <= 5; i++) parts.push(texBox(1.6, 14, 1.8, 4).translate(HX + 1.8, Y_B + 11, z0 + 3 + i * (W - 6) / 5));
+      parts.push(texBox(10, 4, W + 8, 5).translate(HX - 5, Y_B + 2, zc));            // the upper courtyard terrace
+      for (let i = 0; i < 8; i++) parts.push(texBox(1.2, 0.5, 12, 3).translate(HX - 10.6 - i * 1.2, Y_B + 0.25 + (7 - i) * 0.5, zc));
+      for (const sz of [-1, 1]) parts.push(texBox(3.2, 3, 3.2, 4).translate(HX - 8.2, F + 1.5, zc + sz * 8.5));   // statue plinths
+      parts.push(texBox(1.4, 1.2, W + 2, 4).translate(HX - 0.6, F + 24.4, zc));       // cornice
+      parts.push(texBox(1.1, 0.8, W + 1, 4).translate(HX - 0.4, F + 14.6, zc));       // string course
       const fm = new THREE.Mesh(mergeUV(parts), burgM);
       fm.castShadow = fm.receiveShadow = true;
       scene.add(fm);
-      const archShape = (w, h) => {
-        const sh = new THREE.Shape();
-        sh.moveTo(-w / 2, 0); sh.lineTo(w / 2, 0); sh.lineTo(w / 2, h - w / 2);
-        sh.absarc(0, h - w / 2, w / 2, 0, Math.PI, false); sh.lineTo(-w / 2, 0);
-        return new THREE.ShapeGeometry(sh, 8);
+      // the front itself: one slab with real openings, so the hall is enterable
+      const arch = (cx, w, y0, h) => {
+        const p = new THREE.Path();
+        p.moveTo(cx - w / 2, y0); p.lineTo(cx + w / 2, y0); p.lineTo(cx + w / 2, y0 + h - w / 2);
+        p.absarc(cx, y0 + h - w / 2, w / 2, 0, Math.PI, false); p.lineTo(cx - w / 2, y0);
+        return p;
       };
-      const winLit = new THREE.MeshBasicMaterial({ color: 0xffa860 });
-      for (let i = 0; i < 5; i++){
-        const m = new THREE.Mesh(archShape(6.2, 10), darkM);
-        m.position.set(HX + 1.95, Y_B + 4, z0 + 3 + (i + 0.5) * (W - 6) / 5);
-        m.rotation.y = -Math.PI / 2;
-        scene.add(m);
+      const front = new THREE.Shape();
+      front.moveTo(z0, -0.6); front.lineTo(z1, -0.6); front.lineTo(z1, 24); front.lineTo(z0, 24); front.lineTo(z0, -0.6);
+      const bay = (W - 6) / 5;
+      for (let i = 0; i < 5; i++) front.holes.push(arch(z0 + 3 + (i + 0.5) * bay, 6.2, 0, 10));
+      const winZ = [];
+      for (let i = 0; i < 12; i++){ const wz = z0 + 3 + (i + 0.5) * (W - 6) / 12; winZ.push(wz); front.holes.push(arch(wz, 1.7, 16.2, 3.6)); }
+      const fg = new THREE.ExtrudeGeometry(front, { depth: HALL.thick, bevelEnabled: false, curveSegments: 10 });
+      const fuv = fg.attributes.uv;
+      for (let i = 0; i < fuv.count; i++) fuv.setXY(i, fuv.getX(i) / 5.5, fuv.getY(i) / 5.5);
+      fg.rotateY(-Math.PI / 2);          // shape x → world z, extrusion → world −x
+      fg.translate(HX + HALL.thick, F, 0);
+      const fmesh = new THREE.Mesh(fg, burgM);
+      fmesh.castShadow = fmesh.receiveShadow = true;
+      scene.add(fmesh);
+
+      // the hall: closed box of dim stone, the floor worn flags
+      const hallM = makeMasonryMaterial({ color: 0x9c9890, groundY: F, key: 'hallin', streak: 0.2, damp: 0.25 });
+      hallM.color.setRGB(0.42, 0.44, 0.43);   // indoors: no sky reaches these walls
+      hallM.normalScale.set(0.45, 0.45);
+      const inX = HX + HALL.thick, D = HXB - inX, xc = (inX + HXB) / 2, H = 24;
+      const shell = [];
+      shell.push(texBox(D, 1, W, 4).translate(xc, F - 0.5, zc));                    // floor
+      shell.push(texBox(D, 1.5, W, 5).translate(xc, F + H + 0.75, zc));             // ceiling
+      shell.push(texBox(1.5, H, W, 5).translate(HXB + 0.75, F + H / 2, zc));        // back wall
+      for (const sz of [-1, 1]) shell.push(texBox(D, H, 1.5, 5).translate(xc, F + H / 2, zc + sz * (W / 2 + 0.75)));
+      // two arcades of square piers dividing nave from aisles
+      const piers = [];
+      for (const px of [inX + D * 0.3, inX + D * 0.72]){
+        for (let i = 0; i <= 5; i++){
+          const pz = z0 + 4 + i * (W - 8) / 5;
+          piers.push([px, pz]);
+          shell.push(texBox(2.4, 13, 2.4, 4).translate(px, F + 6.5, pz));
+          shell.push(texBox(3.2, 0.8, 3.2, 4).translate(px, F + 13.4, pz));
+          if (i < 5){
+            const span = (W - 8) / 5;
+            const ar = new THREE.TorusGeometry(span / 2, 0.9, 6, 14, Math.PI).rotateY(Math.PI / 2);
+            ar.translate(px, F + 13.8, pz + span / 2);
+            shell.push(ar);
+            shell.push(texBox(2.0, H - 18, span, 5).translate(px, F + 18 + (H - 18) / 2, pz + span / 2));
+          }
+        }
+      }
+      for (let i = 0; i < 7; i++) shell.push(texBox(D, 0.8, 0.9, 3).translate(xc, F + H - 0.4, z0 + 2 + i * (W - 4) / 6));   // roof beams
+      const hm = new THREE.Mesh(mergeUV(shell), hallM);
+      hm.castShadow = hm.receiveShadow = true;
+      scene.add(hm);
+
+      // shafts of daylight from the high windows
+      const shaftM = new THREE.ShaderMaterial({
+        uniforms: { uOp: { value: 0.09 } }, transparent: true, depthWrite: false, side: THREE.DoubleSide,
+        blending: THREE.AdditiveBlending,
+        vertexShader: `varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }`,
+        fragmentShader: `uniform float uOp; varying vec2 vUv;
+          void main(){
+            float edge = pow(sin(vUv.x * 3.14159), 2.0);
+            float fall = smoothstep(0.0, 0.08, vUv.y) * (0.45 + 0.55 * vUv.y);
+            gl_FragColor = vec4(vec3(0.62, 0.78, 0.95) * edge * fall * uOp, 1.0);
+          }`,
+      });
+      hallLight.shaftM = shaftM;
+      const pc = document.createElement('canvas'); pc.width = pc.height = 64;
+      { const g = pc.getContext('2d'); const gr = g.createRadialGradient(32, 32, 2, 32, 32, 31);
+        gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.55, 'rgba(255,255,255,0.55)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+        g.fillStyle = gr; g.fillRect(0, 0, 64, 64); }
+      const patchM = new THREE.MeshBasicMaterial({ color: 0x9ab8d0, map: new THREE.CanvasTexture(pc), transparent: true, opacity: 0.5,
+        blending: THREE.AdditiveBlending, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2 });
+      hallLight.patchM = patchM;
+      for (const wz of winZ.filter((_, i) => i % 3 === 1)){
+        const from = new THREE.Vector3(inX, F + 18, wz), to = new THREE.Vector3(inX + 20, F + 0.05, wz + 5);
+        const len = from.distanceTo(to);
+        for (const rot of [0, Math.PI / 2]){
+          const g = new THREE.PlaneGeometry(3.4, len).rotateY(rot);
+          const m = new THREE.Mesh(g, shaftM);
+          m.position.copy(from).lerp(to, 0.5);
+          m.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), from.clone().sub(to).normalize());
+          scene.add(m);
+        }
+        const pm = new THREE.Mesh(new THREE.PlaneGeometry(6.5, 3.6).rotateX(-Math.PI / 2), patchM);
+        pm.position.copy(to).add(new THREE.Vector3(0, 0.03, 0));
+        scene.add(pm);
+      }
+      // torches on the piers, and a few lights to make them count
+      for (const [k, [px, pz]] of piers.entries()){
+        if (k % 2) continue;
+        const sx = px < xc ? 1.3 : -1.3;
+        hallLight.torches.push([px + sx, F + 7.4, pz, 1.4]);
+        const br = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.07, 0.6, 6), ironM);
+        br.position.set(px + sx, F + 6.9, pz);
+        scene.add(br);
+      }
+      for (const [px, pz] of [[xc, zc - 12], [xc, zc + 12], [inX + 6, zc]]){
+        const pl = new THREE.PointLight(0xffa050, 260, 30, 2);
+        pl.position.set(px, F + 8, pz);
+        scene.add(pl);
+      }
+      // trestle tables, benches, barrels and crates
+      const wood = mat(0x4a3826, { roughness: 0.85 });
+      const furn = [];
+      const r3 = mulberry32(808);
+      for (let i = 0; i < 6; i++){
+        const tx = xc + (r3() - 0.5) * 12, tz = z0 + 8 + i * (W - 16) / 5, ry = (r3() - 0.5) * 0.4;
+        const t = new THREE.Group();
+        const top = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.12, 5.2), wood); top.position.y = 0.95; t.add(top);
+        for (const [lx, lz] of [[-0.8, -2.2], [0.8, -2.2], [-0.8, 2.2], [0.8, 2.2]]){
+          const leg = new THREE.Mesh(new THREE.BoxGeometry(0.12, 0.9, 0.12), wood); leg.position.set(lx, 0.45, lz); t.add(leg);
+        }
+        for (const bx of [-1.5, 1.5]){
+          const bench = new THREE.Mesh(new THREE.BoxGeometry(0.45, 0.5, 4.4), wood); bench.position.set(bx, 0.25, 0); t.add(bench);
+        }
+        const cup = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.16, 6), mat(0x8a7a50, { metalness: 0.6, roughness: 0.4 }));
+        cup.position.set(0.3, 1.09, 0.6); t.add(cup);
+        t.position.set(tx, F, tz); t.rotation.y = ry;
+        furn.push(t);
       }
       for (let i = 0; i < 12; i++){
-        const m = new THREE.Mesh(archShape(1.7, 3.6), i % 3 === 1 ? winLit : darkM);
-        m.position.set(HX + 1.95, Y_B + 21, z0 + 3 + (i + 0.5) * (W - 6) / 12);
-        m.rotation.y = -Math.PI / 2;
-        scene.add(m);
+        const near = i % 2 ? z0 + 2 + r3() * 3 : z1 - 2 - r3() * 3;
+        const o = i % 3 === 0
+          ? new THREE.Mesh(new THREE.BoxGeometry(1.2, 1.0, 1.2), wood)
+          : new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.55, 1.2, 12), mat(0x5a4028, { roughness: 0.8 }));
+        o.position.set(inX + 3 + r3() * (D - 6), F + 0.55, near);
+        furn.push(o);
+      }
+      for (const f of furn){ f.traverse(o => { o.castShadow = o.receiveShadow = true; }); scene.add(f); }
+
+      // two kings in stone flank the stair to the hall
+      const stoneM = new THREE.MeshStandardMaterial({ color: 0x62645e, roughness: 0.95 });
+      for (const [sz, cfg] of [[-1, { prop: 'sword', beard: 0.9, cloak: 0x888888 }], [1, { prop: 'spear', beard: 0.7, helm: 'rohan' }]]){
+        const king = makePerson(Object.assign({ height: 1.8, hairLen: 0.6, pose: 'guard' }, cfg));
+        king.traverse(o => { if (o.isMesh) o.material = o.material.transparent ? o.material : stoneM; });
+        king.scale.setScalar(2.9);
+        king.position.set(HX - 8.2, F + 3, zc + sz * 8.5);
+        king.rotation.y = -Math.PI / 2;
+        scene.add(king);
       }
     }
 
@@ -578,11 +765,9 @@ export default {
         door.position.set(s * 1.56, 3.8, 3.6);
         door.castShadow = door.receiveShadow = true;
         gate.add(door);
-        for (const yy of [1.2, 3.8, 6.4]){
-          const band = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.2, 0.08), ironM);
-          band.position.set(s * 1.56, yy, 3.86);
-          gate.add(band);
-        }
+        const carve = new THREE.Mesh(new THREE.PlaneGeometry(3.0, 7.4), doorCarving());
+        carve.position.set(s * 1.56, 3.8, 3.84);
+        gate.add(carve);
       }
       // threshold arch moulding
       const arch = new THREE.Mesh(new THREE.TorusGeometry(3.4, 0.4, 6, 16, Math.PI), burgM);
@@ -684,6 +869,22 @@ export default {
       ];
       const cw = sweep(CAUSE, prof, { heightAt, step: 1.2, tile: 5, baseY: (s) => ramp(s) });
       addMesh(cw.geo, wallM);
+      // the last span leaps a cleft in the rock on a single arch
+      const f = cw.frame(0.955);
+      const ground = heightAt(f.p.x, f.p.z), deck = ramp(0.955);
+      const archH = deck - 1.6 - ground;
+      if (archH > 3){
+        const w = Math.min(9, archH * 1.1);
+        const sh = new THREE.Shape();
+        sh.moveTo(-w / 2, -4); sh.lineTo(w / 2, -4); sh.lineTo(w / 2, archH - w / 2);
+        sh.absarc(0, archH - w / 2, w / 2, 0, Math.PI, false); sh.lineTo(-w / 2, -4);
+        for (const side of [-1, 1]){
+          const m = new THREE.Mesh(new THREE.ShapeGeometry(sh, 10), darkM);
+          m.position.set(f.p.x + f.right.x * side * 5.75, ground, f.p.z + f.right.z * side * 5.75);
+          m.rotation.y = Math.atan2(f.right.x * side, f.right.z * side);
+          scene.add(m);
+        }
+      }
     }
 
     // ---- water -------------------------------------------------------------
@@ -1006,6 +1207,16 @@ export default {
     // ---- named heroes ----------------------------------------------------
     const crowd = new Crowd(heightAt);
     updates.push((t, dt) => crowd.update(t, dt));
+    // inside the great hall: the king's guard, and folk sheltering from the storm
+    for (let i = 0; i < 7; i++){
+      const p = i < 3 ? Cast.rohirrim({ pose: 'guard' }) : makePerson({
+        height: 1.55 + rand() * 0.2, skin: 0xd8b498, hair: [0xb08c50, 0x6a4a28, 0xc9c2b2][i % 3], hairLen: 0.8,
+        robe: [0x6b5838, 0x5a4a3a, 0x7a6a50, 0x4a4436][i % 4], cloak: 0x4a4030, hoodUp: i % 3 === 0,
+      });
+      p.position.set(HALL.x0 + 9 + rand() * 28, HALL.floor, HALL.z0 + 6 + rand() * (HALL.z1 - HALL.z0 - 12));
+      p.rotation.y = rand() * Math.PI * 2;
+      crowd.idle(p); scene.add(p);
+    }
     const wallSpot = (t, u) => {
       const f = deeping.frame(t);
       return { x: f.p.x - f.right.x * u, z: f.p.z - f.right.z * u, ry: faceRight(f.right) };
@@ -1093,6 +1304,7 @@ export default {
       scene.add(pl);
       lights.push({ pl, base: 420, seed: x * 0.3 });
     }
+    flames.push(...hallLight.torches);
     const fire = makeFlames(scene, flames, { size: 1.0 });
     scene.add(fire.mesh); updates.push(fire.update);
     updates.push((t) => {
@@ -1163,6 +1375,8 @@ export default {
       fill.intensity = lerp(D.fill, Nn.fill, m);
       flash.intensity = flashF * 5;
       backdrop.children.forEach((r, i) => r.material.color.copy(lc(ringCols[i][0], ringCols[i][1], m)).addScalar(flashF * 0.15));
+      hallLight.shaftM.uniforms.uOp.value = lerp(0.09, 0.015, m) * (1 + flashF * 2);
+      hallLight.patchM.opacity = lerp(0.32, 0.04, m);
       for (const b of banners) b.uniforms.uLight.value = lerp(0.3, 0.13, m) + flashF * 0.8;
       // the tussock shader is unlit, so its colours follow the light by hand
       tussock.mesh.material.uniforms.uColA.value.copy(lc(0x2e2a1e, 0x0c1418, m)).addScalar(flashF * 0.3);
@@ -1190,6 +1404,7 @@ export default {
       applyMood(mood, flashF);
       // rain follows the eye
       rain.mesh.position.set(camera.position.x, camera.position.y - 45, camera.position.z);
+      rain.mesh.visible = !inHall(-camera.position.x, camera.position.z, 0.5);   // no rain indoors
     });
 
     // ---- shots -----------------------------------------------------------
@@ -1245,6 +1460,7 @@ export default {
       { name: 'Théoden above the gate', pos: [gtop.x + gn.x * 2, gtop.y + 2, gtop.z + gn.z * 2], look: [-40, 6, -220] },
       { name: 'The Horn of Helm', pos: [KEEP.x - 14, KEEP_GALLERY + 6, KEEP.z - 17], look: [KEEP.x - 1, KEEP_GALLERY + 3.4, KEEP.z - 2.5] },
       { name: 'Haldir’s company', pos: [-70, 18, 70], look: [-60, 8, 30] },
+      { name: 'The great hall', pos: [HALL.x0 + 7, HALL.floor + 8, HALL.z1 - 5], look: [HALL.x1 - 8, HALL.floor + 2, HALL.z0 + 12] },
       { name: 'The Glittering Caves', pos: [4, heightAt(4, 400) + 6, 400], look: [4, heightAt(4, 440) + 6, 452] },
     ];
 
@@ -1258,7 +1474,8 @@ export default {
     const flipX = (p) => [-p[0], p[1], p[2]];
     for (const sh of shots){ sh.pos = sh.pos.map(flipX); sh.look = sh.look.map(flipX); }
     for (const vp of viewpoints){ vp.pos = flipX(vp.pos); vp.look = flipX(vp.look); }
-    const worldHeightAt = (x, z) => heightAt(-x, z);
+    // flight may enter the hall: inside it the 'ground' is its floor
+    const worldHeightAt = (x, z) => inHall(-x, z) ? HALL.floor : heightAt(-x, z);
 
     return {
       scene, heightAt: worldHeightAt, shots, viewpoints,

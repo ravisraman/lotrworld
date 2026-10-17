@@ -46,8 +46,10 @@ Open **`http://localhost:8000/#helmsdeep`** to start directly at Helm's Deep
    tussock-and-scree flanks. Across the cleft's mouth runs the buttressed
    Deeping Wall with its barred culvert; on its right rises the Hornburg — a
    curtain of great ashlar blocks with square towers and heavy merlons, the
-   round inner ward, the great hall's two-storey arcade cut into the cliff
-   behind, and the tall, buttressed keep (with the Horn of Helm in its upper
+   round inner ward, the upper courtyard where two stone kings flank the stair,
+   the great hall's two-storey arcade cut into the cliff behind — and the hall
+   itself, which you can fly into: piers and arches, shafts of light from the
+   high windows, torches, trestle tables, folk sheltering from the storm — and the tall, buttressed keep (with the Horn of Helm in its upper
    gallery) where the wall meets the rock. The gate stands on the far side,
    reached by a causeway climbing along the cliff's toe. Behind, the gorge
    narrows to the Glittering Caves; Helm's Dike lies far out in the coomb.

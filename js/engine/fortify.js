@@ -111,7 +111,7 @@ export function sweep(path, profile, opts = {}){
 // Battlements along a path: merlons of size (w,h,d) every `spacing`, at
 // lateral offset u, standing on height y(t01).
 export function battlements(P, o){
-  const c = Object.assign({ spacing: 2.4, w: 1.35, h: 1.1, d: 1.0, u: 0, y: () => 0, tile: 4, skip: () => false }, o);
+  const c = Object.assign({ spacing: 2.4, w: 1.35, h: 1.1, d: 1.0, u: 0, y: () => 0, tile: 4, skip: () => false, cap: 0 }, o);
   const n = Math.floor(P.length / c.spacing);
   const geos = [];
   const tmp = new THREE.Vector3(), tan = new THREE.Vector3();
@@ -121,7 +121,13 @@ export function battlements(P, o){
     if (c.skip(t)) continue;
     P.at(t, tmp); P.tangent(t, tan); tan.y = 0; tan.normalize();
     const right = new THREE.Vector3(-tan.z, 0, tan.x);
-    const g = texBox(c.w, c.h, c.d, c.tile);
+    let g = texBox(c.w, c.h, c.d, c.tile);
+    if (c.cap){
+      // a low pyramid weathering the top, as on the Hornburg's merlons
+      const cap = new THREE.ConeGeometry(Math.SQRT1_2, 1, 4).rotateY(Math.PI / 4).scale(c.w, c.cap, c.d);
+      cap.translate(0, c.h / 2 + c.cap / 2, 0);
+      g = mergeUV([g, cap]);
+    }
     q.setFromAxisAngle(up, Math.atan2(tan.x, tan.z) + Math.PI / 2);
     m.compose(new THREE.Vector3(tmp.x + right.x * c.u, c.y(t) + c.h / 2, tmp.z + right.z * c.u), q, new THREE.Vector3(1, 1, 1));
     g.applyMatrix4(m);
