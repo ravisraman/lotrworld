@@ -17,6 +17,7 @@ import { makeParticles, makeBanner, makeSmoke, makeWater, makeGrass, scatterRock
 import { Cast, Crowd, makePerson, makeHorse, mat } from '../engine/characters.js';
 import { makeGroundMaterial, makeMasonryMaterial, makeTexturedMaterial, texturesReady, setWetness } from '../engine/textures.js';
 import { makeTroops, setTroopWetness } from '../engine/army.js';
+import { makeRain } from '../engine/weather.js';
 import { sweep, battlements, texBox, latheTower, mergeUV } from '../engine/fortify.js';
 
 // ------------------------------------------------------------ dimensions --
@@ -1182,6 +1183,11 @@ export default {
           troops.push({ kind: 'urukSword', x: x + dx, y: heightAt(x + dx, z + dz), z: z + dz, ry: 0 });
         }
       }
+      // before the centre of the host, a captain thrusts his blade at the sky
+      // and roars; the host answers with the slam of their pikes
+      for (const [hx, hz] of [[-40, -84], [60, -86]]){
+        troops.push({ kind: 'urukHerald', x: hx, y: heightAt(hx, hz), z: hz, ry: Math.atan2(-8 - hx, 400 - hz), s: 1.12 });
+      }
       // the torch-bearer stands on a boulder before the host, as in the film
       const bx = fc.p.x + 9, bz = -83;
       const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(2.2, 1), mat(0x4a4c4e, { roughness: 0.6, flatShading: true }));
@@ -1315,9 +1321,8 @@ export default {
     });
 
     // ---- rain, and the storm -------------------------------------------
-    const rain = makeParticles(scene, 'rain', { count: 9000, area: [150, 90, 150], cy: 0, opacity: 0.3, fall: 30, size: 0.8, streakAngle: 0.12, seed: 31 });
-    rain.mesh.material.uniforms.uYBase.value = 0;
-    scene.add(rain.mesh); updates.push(rain.update);
+    const rain = makeRain();
+    scene.add(rain.group);
     const bolt = makeBolt(mulberry32(9));
     scene.add(bolt);
     const strike = (t) => {
@@ -1337,7 +1342,7 @@ export default {
         fog: [0x5d646c, 0.00024], zenith: 0x34404e, horizon: 0x8a8580, sGround: 0x2a2a2c,
         cloud: 0x6a6e74, cloudSh: 0x30343a, cover: 0.8, sunI: 0.35,
         hemiSky: 0xb2bec8, hemiGround: 0x44443e, hemiI: 1.4, keyC: 0xd0d2d0, keyI: 1.9,
-        fill: 0.4, fire: 0.5, wet: 0.3, rain: 0.16, bolt: 0.5,
+        fill: 0.4, fire: 0.5, wet: 0.3, rain: 0.2, bolt: 0.5,
         exposure: 1.55,
         grade: { lift: [0.01, 0.014, 0.016], gamma: [1.02, 1.03, 1.03], gain: [0.98, 1.02, 1.0], sat: 0.8, temp: -0.08, bloom: 0.4, bloomThreshold: 0.84, vignette: 0.5 },
       },
@@ -1345,7 +1350,7 @@ export default {
         fog: [0x0e1c26, 0.00135], zenith: 0x06111a, horizon: 0x1a3040, sGround: 0x0b1014,
         cloud: 0x1c2d3a, cloudSh: 0x08111a, cover: 0.86, sunI: 0.0,
         hemiSky: 0x4a7898, hemiGround: 0x141a1c, hemiI: 1.0, keyC: 0x8cc4e6, keyI: 1.15,
-        fill: 0.14, fire: 1.0, wet: 0.95, rain: 0.42, bolt: 1.0,
+        fill: 0.14, fire: 1.0, wet: 0.95, rain: 0.62, bolt: 1.0,
         exposure: 1.9,
         grade: { lift: [0.0, 0.01, 0.022], gamma: [1.0, 1.01, 1.04], gain: [0.94, 1.02, 1.12], sat: 0.95, temp: -0.28, bloom: 0.65, bloomThreshold: 0.7, vignette: 0.62 },
       },
@@ -1367,6 +1372,7 @@ export default {
       u.uCloudSh.value.copy(lc(D.cloudSh, Nn.cloudSh, m)).addScalar(flashF * 0.2);
       u.uCover.value = lerp(D.cover, Nn.cover, m);
       u.uSunI.value = lerp(D.sunI, Nn.sunI, m);
+      u.uSunColor.value.copy(lc(0xff9a60, 0x000000, m));   // the clouds' sunset lining goes out at night
       hemi.color.copy(lc(D.hemiSky, Nn.hemiSky, m));
       hemi.groundColor.copy(lc(D.hemiGround, Nn.hemiGround, m));
       hemi.intensity = lerp(D.hemiI, Nn.hemiI, m) + flashF * 1.6;
@@ -1384,7 +1390,7 @@ export default {
       tussock.mesh.material.uniforms.uColB.value.copy(lc(0x433b28, 0x111c20, m)).addScalar(flashF * 0.3);
       fireBoost = lerp(D.fire, Nn.fire, m);
       fire.uniforms.uBright.value = lerp(0.8, 1.15, m);
-      rain.mesh.material.uniforms.uOp.value = lerp(D.rain, Nn.rain, m);
+      rain.set(lerp(D.rain, Nn.rain, m), flashF);
       const wet = lerp(D.wet, Nn.wet, m);
       setWetness(scene, wet);
       setTroopWetness(wet);
@@ -1404,8 +1410,8 @@ export default {
       }
       applyMood(mood, flashF);
       // rain follows the eye
-      rain.mesh.position.set(camera.position.x, camera.position.y - 45, camera.position.z);
-      rain.mesh.visible = !inHall(-camera.position.x, camera.position.z, 0.5);   // no rain indoors
+      rain.update(t, camera, (x, z) => heightAt(-x, z));
+      if (inHall(-camera.position.x, camera.position.z, 0.5)) rain.group.visible = false;   // no rain indoors
     });
 
     // ---- shots -----------------------------------------------------------
@@ -1454,7 +1460,7 @@ export default {
       { name: 'Above the coomb', pos: [-160, 140, -560], look: [30, 30, 0] },
       { name: 'The Deeping Wall', pos: [fc.p.x - fc.right.x * 5 + 8, Y_TOP + 2.3, fc.p.z - fc.right.z * 5], look: [fc.p.x - 20, 8, -180] },
       { name: 'Aragorn, Legolas & Gimli', pos: [aP.x - 5, Y_TOP + 2.2, aP.z + 5], look: [aP.x, Y_TOP + 1.4, aP.z] },
-      { name: 'Front rank of the host', pos: [-40, heightAt(-40, -92) + 2.4, -92], look: [-45, 3, -140] },
+      { name: 'Front rank of the host', pos: [-38, heightAt(-38, -77) + 1.9, -77], look: [-40, 3.2, -90] },
       { name: 'Among the pikes', pos: [-70, heightAt(-70, -140) + 2.2, -140], look: [-30, 22, 0] },
       { name: 'The culvert', pos: [fc.p.x + fc.right.x * 22, heightAt(fc.p.x + fc.right.x * 22, fc.p.z + fc.right.z * 22) + 3, fc.p.z + fc.right.z * 22], look: [fc.p.x, 5, fc.p.z] },
       { name: 'The causeway', pos: [252, heightAt(252, -214) + 3, -214], look: [gx, Y_B + 5, gz] },
@@ -1470,7 +1476,7 @@ export default {
     // causeway climbs away to the far right, as in the films.
     const world = new THREE.Group();
     world.scale.x = -1;
-    for (const o of [...scene.children]) if (o !== rain.mesh) world.add(o);
+    for (const o of [...scene.children]) if (o !== rain.group) world.add(o);
     scene.add(world);
     const flipX = (p) => [-p[0], p[1], p[2]];
     for (const sh of shots){ sh.pos = sh.pos.map(flipX); sh.look = sh.look.map(flipX); }

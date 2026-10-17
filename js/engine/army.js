@@ -125,6 +125,17 @@ function urukArms(k, lod, rightUp = 0){
     k.sph(0.075, URUK_SKIN, { p: [s * 0.41, 0.9, 0.17 + rightUp * 0.02], part });
   }
 }
+function urukArmRaised(k, lod){
+  // left arm at the side (holding the shield), right arm thrust skyward
+  k.cyl(0.085, 0.075, 0.34, URUK_SKIN, { p: [-0.4, 1.32, 0.02], part: ARM_L });
+  k.cyl(0.085, 0.07, 0.32, IRON, { p: [-0.41, 1.04, 0.1], r: [-0.45, 0, 0], part: ARM_L, metal: 1 });
+  k.cyl(0.085, 0.075, 0.42, URUK_SKIN, { p: [0.47, 1.74, 0.04], r: [0, 0, -0.28], part: ARM_R });
+  k.cyl(0.085, 0.07, 0.4, IRON, { p: [0.58, 2.12, 0.08], r: [0.15, 0, -0.18], part: ARM_R, metal: 1 });
+  k.sph(0.08, URUK_SKIN, { p: [0.63, 2.36, 0.1], part: ARM_R });
+  if (lod === 2) { k.box(0.09, 1.0, 0.03, 0x5a5b5e, { p: [0.66, 2.9, 0.1], part: ARM_R, metal: 1 }); return; }
+  k.box(0.24, 0.05, 0.06, IRON, { p: [0.64, 2.46, 0.1], part: ARM_R, metal: 1 });
+  k.box(0.1, 1.05, 0.02, 0x6a6b6e, { p: [0.66, 3.0, 0.1], r: [0, 0, -0.06], part: ARM_R, metal: 1 });
+}
 function pike(k, lod){
   if (lod === 2){ k.box(0.05, 5.2, 0.05, 0x3a2e22, { p: [0.41, 2.65, 0.17], part: ARM_R }); return; }
   k.cyl(0.026, 0.03, 5.2, 0x3a2e22, { p: [0.41, 2.62, 0.17], part: ARM_R, seg: 5 });
@@ -274,6 +285,8 @@ const KINDS = {
   urukXbow:     (k, l) => { urukBody(k, l); urukArms(k, l); crossbow(k, l); },
   urukTorch:    (k, l) => { urukBody(k, l); urukArms(k, l); urukShield(k, l); torch(k, l); },
   urukCaptain:  (k, l) => { urukBody(k, l, { crest: 0x8a1e14 }); urukArms(k, l); urukShield(k, l); urukSword(k, l); },
+  // the Uruk who raises his blade and roars in the rain before the assault
+  urukHerald:   (k, l) => { urukBody(k, l, { crest: 0x8a1e14 }); urukArmRaised(k, l); urukShield(k, l); },
   urukBerserk:  (k, l) => { urukBody(k, l, { bare: true, tall: true }); urukArms(k, l); torch(k, l); },
   elfBow:       (k, l) => elf(k, l),
   elfBowDark:   (k, l) => elf(k, l, { hair: ELF_HAIR[1] }),
@@ -371,7 +384,11 @@ function troopMaterial(kind){
       .replace('#include <metalnessmap_fragment>', `#include <metalnessmap_fragment>
         metalnessFactor = mix(metalnessFactor, 0.32, vMetal);
         roughnessFactor = mix(roughnessFactor, 0.48, vMetal);
-        roughnessFactor = mix(roughnessFactor, roughnessFactor * 0.6, uWet);`);
+        // rain-soaked: metal turns glossy, cloth and skin darken a little
+        roughnessFactor = mix(roughnessFactor, mix(roughnessFactor * 0.7, 0.2, vMetal), uWet);`)
+      .replace('#include <emissivemap_fragment>', `#include <emissivemap_fragment>
+        // wet sheen: water on helms and pauldrons catches the sky from above
+        totalEmissiveRadiance += vec3(0.05, 0.08, 0.11) * vMetal * uWet * pow(max(normal.y, 0.0), 3.0);`);
   };
   matCache.set(key, m);
   return m;

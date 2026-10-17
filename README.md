@@ -62,8 +62,8 @@ Open **`http://localhost:8000/#helmsdeep`** to start directly at Helm's Deep
    ranks, leaning every which way, then shield-men and pikes in drifting
    patches, crossbows at the rear, siege ladders raised throughout, two
    ballistae, a battering ram at the causeway's foot, the blasting-fire on its
-   litters, and the berserker in his pale domed helm on a boulder before the
-   culvert — pikes slamming the ground in a wave that
+   litters, a captain out in front thrusting his blade at the sky, and the
+   berserker in his pale domed helm on a boulder before the culvert — pikes slamming the ground in a wave that
    rolls back through the host, torches guttering in the rain, lightning
    showing the whole army for an instant. Toggle **overcast dusk** ↔ the
    films' teal **night storm** with `N`; the **Explore** list glides you to
@@ -108,6 +108,10 @@ Left-edge dots navigate; each region cycles its cinematic shots when idle.
     pike-slam, each pike's own lean). Four levels of detail per soldier are
     re-bucketed by camera distance into instance buffers, so ~23,000 figures
     draw in a few dozen calls.
+  - `js/engine/weather.js` — the downpour: tens of thousands of thin,
+    motion-stretched streaks in a box that follows the camera, cylinders of
+    scrolling rain-sheets further out, and spray where it meets the ground;
+    armour turns glossy and catches a wet sheen as the storm comes on.
   - `js/engine/fortify.js` — castle-building: cross-sections swept along
     paths with real-world UVs, battlements, lathe towers, gabled roofs.
   - `js/engine/textures.js` — the vendored CC0 texture sets plus shader
