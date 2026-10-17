@@ -79,6 +79,19 @@
   #nav button.active{color:var(--parchment)}
   #nav button.active .nm{opacity:1;transform:none}
 
+  /* ---- explore: viewpoints to glide to ---- */
+  #places{position:fixed;right:22px;top:50%;transform:translateY(-50%);display:none;
+    flex-direction:column;align-items:flex-end;gap:3px;pointer-events:auto}
+  #places.show{display:flex}
+  #places .pl-head{font-size:10px;letter-spacing:.42em;text-transform:uppercase;
+    color:rgba(212,184,106,.8);margin-bottom:6px;text-shadow:0 1px 4px #000}
+  #places button{background:none;border:0;border-right:1px solid rgba(212,184,106,.25);
+    color:rgba(232,221,192,.6);font-family:inherit;font-size:12px;font-style:italic;
+    letter-spacing:.06em;padding:3px 12px 3px 6px;cursor:pointer;text-align:right;
+    text-shadow:0 1px 5px #000;transition:all .25s}
+  #places button:hover{color:#fff;border-right-color:var(--gold);padding-right:16px}
+  @media (max-width:700px){ #places{display:none !important} }
+
   /* ---- controls hint ---- */
   #hint{position:fixed;right:22px;bottom:2.6vh;text-align:right;font-size:11px;
     letter-spacing:.14em;color:rgba(232,221,192,.5);text-shadow:0 1px 4px #000;
@@ -159,14 +172,16 @@
   </div>
   <div id="regionlabel"><div class="rl-name"></div><div class="rl-sub"></div></div>
   <div id="nav"></div>
+  <div id="places"></div>
   <div id="hint">
-    <b>M</b> map &nbsp; <b>1–0</b> travel &nbsp; <b>T</b> grand tour &nbsp; <b>F</b> free flight<br/>
-    <b>drag</b> look &nbsp; <b>W A S D</b> fly &nbsp; <b>shift</b> speed &nbsp; <b>H</b> hide
+    <b>M</b> map &nbsp; <b>1–0 −</b> travel &nbsp; <b>T</b> grand tour &nbsp; <b>F</b> free flight &nbsp; <b>N</b> night<br/>
+    <b>drag</b>/<b>arrows</b> look &nbsp; <b>W A S D</b> fly &nbsp; <b>Q E</b> down/up &nbsp; <b>wheel</b>/<b>shift</b> speed &nbsp; <b>H</b> hide
   </div>
   <div id="actions">
     <button id="btn-map">Map</button>
     <button id="btn-tour">Begin the Tour</button>
     <button id="btn-fly">Free Flight</button>
+    <button id="btn-mood" style="display:none">Night Storm</button>
   </div>
 </div>
 

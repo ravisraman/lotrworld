@@ -534,6 +534,7 @@ export function makeBanner(scene, opts = {}){
   }
   const uniforms = Object.assign({
     uTime: { value: 0 }, uMap: { value: tex }, uWind: { value: o.wind },
+    uLight: { value: o.light ?? 1 },   // unlit cloth: scale for dark scenes
   }, fogUniforms(scene));
   const mat = new THREE.ShaderMaterial({
     uniforms, side: THREE.DoubleSide, transparent: false,
@@ -557,9 +558,10 @@ export function makeBanner(scene, opts = {}){
       ${GLSL_FOG}
       uniform sampler2D uMap;
       varying vec2 vUv; varying float vDist; varying float vWave;
+      uniform float uLight;
       void main(){
         vec3 col = texture2D(uMap, vUv).rgb;
-        col *= 0.85 + vWave * 0.25;
+        col *= (0.85 + vWave * 0.25) * uLight;
         gl_FragColor = vec4(applyFog(col, vDist), 1.0);
       }`,
   });
@@ -578,7 +580,7 @@ export function makeBanner(scene, opts = {}){
   cross.position.y = o.poleH - 0.05;
   cloth.position.x = 0;
   group.add(pole, cross, cloth);
-  return { mesh: group, update(t){ uniforms.uTime.value = t; } };
+  return { mesh: group, uniforms, update(t){ uniforms.uTime.value = t; } };
 }
 
 function drawEmblem(ctx, kind){

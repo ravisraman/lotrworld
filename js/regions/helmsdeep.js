@@ -1,0 +1,1137 @@
+// Helm's Deep — the Hornburg on its rock, the Deeping Wall across the
+// mouth of the gorge, and the night the White Hand came to it. Pre-battle:
+// Haldir's Galadhrim and the men of Rohan line the walls; ten thousand
+// Uruk-hai stand in their ranks in the Deeping Coomb, pikes slamming the
+// ground, torches guttering in the rain, the storm breaking overhead.
+//
+// Layout follows the films' design: the Hornburg (outer curtain, gatehouse,
+// keep with the Horn of Helm, great hall) on a rock spur under the northern
+// cliff; a long causeway climbing the face of the rock to the gate; the
+// curving Deeping Wall with its culvert where the Deeping Stream runs out;
+// the gorge narrowing behind to the Glittering Caves; Helm's Dike far out in
+// the coomb; the three peaks of the Thrihyrne above it all.
+import * as THREE from 'three';
+import { fbm, ridged, mulberry32, smoothstep, clamp, lerp, GLSL_FOG, fogUniforms } from '../engine/util.js';
+import { makeSky, makeMountainBackdrop } from '../engine/sky.js';
+import { makeParticles, makeBanner, makeSmoke, makeWater } from '../engine/nature.js';
+import { Cast, Crowd, makePerson, makeHorse, mat } from '../engine/characters.js';
+import { makeGroundMaterial, makeMasonryMaterial, makeTexturedMaterial, texturesReady, setWetness } from '../engine/textures.js';
+import { makeTroops, setTroopWetness } from '../engine/army.js';
+import { sweep, battlements, texBox, latheTower, gableRoof, mergeUV } from '../engine/fortify.js';
+
+// ------------------------------------------------------------ dimensions --
+const Y_B = 31;      // the Hornburg's courtyard, on top of the Hornrock
+const Y_TOP = 21;    // walkway of the Deeping Wall
+const HR = { cx: 100, cz: -28, rx: 46, rz: 48 };   // the Hornrock (superellipse)
+
+// the Deeping Stream, from the caves, out through the culvert, down the coomb
+const STREAM = [[4, 470], [-6, 330], [-18, 190], [-26, 80], [-30, 8], [-31, -30],
+  [-36, -110], [-30, -210], [-46, -330], [-60, -480], [-44, -680], [-72, -980], [-90, -1300]];
+// the old road up the coomb to the causeway foot
+const ROAD = [[-120, -1400], [-80, -1000], [-55, -700], [-40, -420], [-30, -250], [-24, -170], [-22, -158]];
+// paths in the Deep, wall stairs to the caves
+const DEEP_PATH = [[40, 18], [10, 60], [-10, 160], [-4, 300], [6, 440]];
+
+function distToPolyline(pts, x, z){
+  let best = 1e9;
+  for (let i = 0; i < pts.length - 1; i++){
+    const [ax, az] = pts[i], [bx, bz] = pts[i + 1];
+    const dx = bx - ax, dz = bz - az;
+    const t = clamp(((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz), 0, 1);
+    const d = Math.hypot(x - ax - dx * t, z - az - dz * t);
+    if (d < best) best = d;
+  }
+  return best;
+}
+
+// valley edges: south (−x) cliff line and north (+x) cliff line
+function xL(z){
+  const x = z < 0 ? -118 + 0.95 * z : -118 + 0.16 * z;
+  return x + (fbm(z * 0.011, 3.7, 3) - 0.5) * 34 * (z < -40 ? 1 : 0.35);
+}
+function xR(z){
+  const x = z < -80 ? 150 - 0.95 * (z + 80) : (z < 40 ? 150 : 150 - (z - 40) * 0.25);
+  return x + (fbm(z * 0.011, 9.1, 3) - 0.5) * 34 * (z < -90 ? 1 : 0.35);
+}
+function hornR(x, z){
+  const a = Math.abs(x - HR.cx) / HR.rx, b = Math.abs(z - HR.cz) / HR.rz;
+  return Math.pow(a ** 4 + b ** 4, 0.25);
+}
+function hornPoint(theta, inset = 0.93){
+  const c = Math.cos(theta), s = Math.sin(theta);
+  return [HR.cx + HR.rx * inset * Math.sign(c) * Math.sqrt(Math.abs(c)),
+          HR.cz + HR.rz * inset * Math.sign(s) * Math.sqrt(Math.abs(s))];
+}
+function peak(x, z, cx, cz, r, H){
+  const d = Math.hypot(x - cx, z - cz) / r;
+  return H * Math.exp(-d * d * 1.3) * (0.8 + ridged(x * 0.008, z * 0.008, 3) * 0.4);
+}
+
+function floorH(x, z){
+  let h = z < 0 ? 5 + z * 0.0085 : 5 + z * 0.03;
+  const away = smoothstep(-30, -220, z);
+  h += (fbm(x * 0.007 + 3, z * 0.007 + 1, 4) - 0.5) * 7 * away;
+  h += (fbm(x * 0.06, z * 0.06, 2) - 0.5) * 0.7;
+  // Helm's Dike: an earth rampart with its ditch, breached where the host passed
+  const dz = z + 690 + Math.sin(x * 0.01) * 12;
+  const breach = smoothstep(26, 50, Math.abs(x + 30));
+  h += (Math.exp(-dz * dz / 50) * 4.5 - Math.exp(-((dz + 11) ** 2) / 32) * 3) * breach;
+  // the stream's bed
+  const sd = distToPolyline(STREAM, x, z);
+  if (sd < 9) h -= 1.5 * smoothstep(9, 2.5, sd);
+  return h;
+}
+
+export function heightAt(x, z){
+  let h = floorH(x, z);
+  let d = Math.max(xL(z) - x, x - xR(z));
+  d = Math.max(d, z - (470 + (fbm(x * 0.02, 2.2, 2) - 0.5) * 40));
+  // buttresses and gullies, elongated down-slope so faces break into spurs
+  d += (fbm(x * 0.03 + z * 0.012, z * 0.03 - x * 0.012, 4) - 0.5) * 22;
+  if (d > -25){
+    // sheer near the gorge, steep broken mountainside out in the coomb
+    const sheer = smoothstep(-420, -60, z);
+    const run = lerp(95, 38, sheer);
+    const talus = smoothstep(-25, 0, d) * 7 * (0.6 + fbm(x * 0.05, z * 0.05, 2));
+    let face = lerp(70, 150, sheer) * Math.pow(smoothstep(-1, run, d), 0.85);
+    // ledges: soft terracing of the face
+    const q = 13, f = face / q;
+    face = lerp(face, (Math.floor(f) + smoothstep(0.35, 1, f - Math.floor(f))) * q, 0.55 * smoothstep(0, 20, d));
+    const upper = Math.max(0, d - run) * 0.66 * (0.7 + 0.6 * fbm(x * 0.004, z * 0.004, 3));
+    const crag = ridged(x * 0.012, z * 0.012, 5) * 110 * smoothstep(10, 140, d);
+    // the mountains fall away where the coomb opens onto the Westfold
+    h += (talus + face + upper + crag) * lerp(0.2, 1, smoothstep(-2600, -1500, z));
+  }
+  // the Thrihyrne, three horns above the Deep
+  h += peak(x, z, -60, 1350, 260, 900) + peak(x, z, 230, 1520, 240, 840) + peak(x, z, -330, 1460, 240, 820);
+  // the Hornrock
+  const hr = hornR(x, z);
+  if (hr < 1.25){
+    const k = smoothstep(1.17, 0.98, hr + (fbm(x * 0.08, z * 0.08, 3) - 0.5) * 0.07);
+    h = Math.max(h, lerp(h, Y_B, k));
+    if (hr < 0.97) h = Y_B;
+  }
+  return h;
+}
+
+// --------------------------------------------------------------- terrain --
+function buildTerrain(size, res, cx, cz, ground, sinkInner){
+  const geo = new THREE.PlaneGeometry(size, size, res, res);
+  geo.rotateX(-Math.PI / 2);
+  const pos = geo.attributes.position;
+  const N = pos.count;
+  for (let i = 0; i < N; i++){
+    const x = pos.getX(i) + cx, z = pos.getZ(i) + cz;
+    let y = heightAt(x, z);
+    if (sinkInner && sinkInner(x, z)) y -= 8;
+    pos.setXYZ(i, x, y, z);
+  }
+  geo.computeVertexNormals();
+  const nrm = geo.attributes.normal;
+  const col = new Float32Array(N * 3), w = new Float32Array(N * 3);
+  for (let i = 0; i < N; i++){
+    const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
+    const slope = 1 - nrm.getY(i);
+    const n1 = fbm(x * 0.02 + 4, z * 0.02, 3), n2 = fbm(x * 0.004, z * 0.004, 3);
+    let rock = smoothstep(0.16, 0.36, slope + (n1 - 0.5) * 0.12);
+    rock = Math.max(rock, smoothstep(160, 320, y) * 0.85);
+    // trampled mud where the host stands, under the walls and on the banks
+    let mud = 0;
+    if (z < -70 && z > -460) mud = smoothstep(-70, -110, z) * smoothstep(-460, -380, z) * 0.85;
+    mud = Math.max(mud, smoothstep(40, 0, Math.abs(z + 12)) * 0.6);         // the wall's foot
+    const sd = distToPolyline(STREAM, x, z);
+    mud = Math.max(mud, smoothstep(10, 3, sd));
+    mud *= (0.65 + n1 * 0.6);
+    const td = Math.min(distToPolyline(ROAD, x, z), distToPolyline(DEEP_PATH, x, z));
+    let trail = smoothstep(7, 2.5, td + (n1 - 0.5) * 3);
+    if (hornR(x, z) < 0.97) trail = 0.85;   // the paved courtyard
+    mud *= 1 - rock; trail *= 1 - rock;
+    const sum = mud + trail + rock;
+    if (sum > 1){ mud /= sum; trail /= sum; }
+    w[i * 3] = rock; w[i * 3 + 1] = mud; w[i * 3 + 2] = trail;
+    // tint (0.5 = neutral): sere Rohan grass going gold, cold grey rock,
+    // a dusting of snow on the high crags
+    let r = 0.5, g = 0.5, b = 0.5;
+    const dry = n2;
+    r *= 0.95 + dry * 0.25; g *= 0.95 + dry * 0.1; b *= 0.85;
+    const rk = 0.42 + n1 * 0.16;
+    r = lerp(r, rk * 1.0, rock); g = lerp(g, rk * 1.02, rock); b = lerp(b, rk * 1.06, rock);
+    const snow = smoothstep(560, 760, y + (n1 - 0.5) * 120) * (1 - smoothstep(0.55, 0.8, slope));
+    r = lerp(r, 1.25, snow); g = lerp(g, 1.28, snow); b = lerp(b, 1.36, snow);
+    col[i * 3] = r; col[i * 3 + 1] = g; col[i * 3 + 2] = b;
+  }
+  geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  geo.setAttribute('aW', new THREE.BufferAttribute(w, 3));
+  const mesh = new THREE.Mesh(geo, ground);
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
+// ------------------------------------------------------------- flames ----
+// Torch and brazier fire as flickering additive sprites.
+function makeFlames(scene, pts, o = {}){
+  const N = pts.length;
+  const pos = new Float32Array(N * 3), seed = new Float32Array(N), size = new Float32Array(N);
+  pts.forEach((p, i) => {
+    pos.set([p[0], p[1], p[2]], i * 3);
+    seed[i] = (i * 0.6180339) % 1 * 6.28;
+    size[i] = p[3] || 1;
+  });
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  geo.setAttribute('aSeed', new THREE.BufferAttribute(seed, 1));
+  geo.setAttribute('aSize', new THREE.BufferAttribute(size, 1));
+  const uniforms = Object.assign({ uTime: { value: 0 }, uSize: { value: o.size || 1.2 }, uBright: { value: 1 } }, fogUniforms(scene));
+  const m = new THREE.ShaderMaterial({
+    uniforms, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+    vertexShader: /* glsl */`
+      uniform float uTime, uSize;
+      attribute float aSeed, aSize;
+      varying float vF; varying float vDist;
+      void main(){
+        float f = 0.78 + 0.16 * sin(uTime * 13.0 + aSeed * 7.0) + 0.1 * sin(uTime * 29.0 + aSeed * 3.0);
+        vF = f;
+        vec3 p = position;
+        p.y += 0.06 * sin(uTime * 17.0 + aSeed);
+        vec4 mv = modelViewMatrix * vec4(p, 1.0);
+        vDist = -mv.z;
+        gl_PointSize = clamp(uSize * aSize * f * (300.0 / max(vDist, 0.5)), 3.5, 90.0);
+        gl_Position = projectionMatrix * mv;
+      }`,
+    fragmentShader: /* glsl */`
+      ${GLSL_FOG}
+      uniform float uBright;
+      varying float vF; varying float vDist;
+      void main(){
+        vec2 q = gl_PointCoord - 0.5;
+        q.y *= 0.8;
+        float d = length(q);
+        float core = smoothstep(0.22, 0.0, d);
+        float halo = smoothstep(0.5, 0.05, d);
+        vec3 col = vec3(1.0, 0.42, 0.1) * halo * 0.9 + vec3(1.0, 0.82, 0.5) * core * 1.6;
+        float fogK = 1.0 - exp(-uFogDensity * uFogDensity * vDist * vDist * 0.45);
+        col *= (1.0 - fogK * 0.85) * vF * uBright;
+        gl_FragColor = vec4(col, 1.0);
+      }`,
+  });
+  const p = new THREE.Points(geo, m);
+  p.frustumCulled = false;
+  return { mesh: p, uniforms, update(t){ uniforms.uTime.value = t; } };
+}
+
+// a jagged lightning bolt ribbon (two crossed strips)
+function makeBolt(rand){
+  const pts = [];
+  let x = 0, y = 0;
+  for (let i = 0; i < 18; i++){ pts.push([x, y]); y -= 30 + rand() * 30; x += (rand() - 0.5) * 70; }
+  const geos = [];
+  for (const rot of [0, Math.PI / 2]){
+    const pos = [];
+    for (let i = 0; i < pts.length - 1; i++){
+      const [x0, y0] = pts[i], [x1, y1] = pts[i + 1];
+      const w0 = 5 * (1 - i / pts.length) + 1.5, w1 = 5 * (1 - (i + 1) / pts.length) + 1.5;
+      pos.push(x0 - w0, y0, 0, x0 + w0, y0, 0, x1 + w1, y1, 0, x0 - w0, y0, 0, x1 + w1, y1, 0, x1 - w1, y1, 0);
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.rotateY(rot);
+    geos.push(g);
+  }
+  const g = mergeUV(geos.map(x => { x.computeVertexNormals(); return x; }));
+  const m = new THREE.MeshBasicMaterial({ color: 0xdfe8ff, transparent: true, opacity: 0, fog: false,
+    blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide });
+  return new THREE.Mesh(g, m);
+}
+
+export default {
+  id: 'helmsdeep', name: "Helm's Deep", subtitle: 'The Hornburg, on the night of the storm',
+  build(ctx){
+    const scene = new THREE.Scene();
+    scene.fog = new THREE.FogExp2(0x3a404c, 0.0012);
+    const rand = mulberry32(3002);
+    const updates = [];
+    const camera = ctx.camera;
+
+    // ---- ground ---------------------------------------------------------
+    const ground = makeGroundMaterial();
+    const INNER = { size: 1500, res: 620, cx: 0, cz: -260 };
+    const inner = buildTerrain(INNER.size, INNER.res, INNER.cx, INNER.cz, ground, null);
+    scene.add(inner);
+    const half = INNER.size / 2 - 14;
+    const outer = buildTerrain(7200, 300, 0, -400, ground,
+      (x, z) => Math.abs(x - INNER.cx) < half && Math.abs(z - INNER.cz) < half);
+    scene.add(outer);
+
+    // ---- sky, light, weather -------------------------------------------
+    const sunDir = new THREE.Vector3(-0.9, 0.16, -0.25).normalize();   // the last light, low over the coomb's southern rim
+    const sky = makeSky({
+      zenith: 0x1a2130, horizon: 0x8a5a44, ground: 0x2a2a2c,
+      sunDir, sunColor: 0xff9a60, sunSize: 0.012, sunHalo: 0.55, sunIntensity: 0.55,
+      cloudColor: 0x4a4e58, cloudShadow: 0x141619, cloudCover: 0.78, cloudSharp: 0.7,
+      cloudScale: 1.6, cloudSpeed: 0.02, haze: 0.75, stars: 0,
+    });
+    scene.add(sky.mesh); updates.push(sky.update);
+    // distant ranges, painted in the fog's own colour so the far ground
+    // dissolves into them; tinted with the mood in applyMood()
+    const backdrop = makeMountainBackdrop([
+      { dist: 3300, height: 1100, color: 0x565d6a, jag: 3.4, seed: 211 },
+      { dist: 2900, height: 650, color: 0x4b525f, jag: 3.0, seed: 212, gap: [Math.PI * 1.32, Math.PI * 1.68] },
+    ]);
+    scene.add(backdrop);
+    const ringCols = [[0x565d6a, 0x1a1f28], [0x4b525f, 0x161b24]];
+
+    const hemi = new THREE.HemisphereLight(0x6f7f9a, 0x2e2a24, 0.6);
+    scene.add(hemi);
+    const key = new THREE.DirectionalLight(0xff9e70, 1.4);
+    key.castShadow = true;
+    key.shadow.mapSize.set(4096, 4096);
+    const sc = key.shadow.camera;
+    sc.left = -240; sc.right = 240; sc.top = 240; sc.bottom = -240; sc.near = 10; sc.far = 1600;
+    key.shadow.bias = -0.0004;
+    key.target.position.set(0, 0, -60);
+    scene.add(key, key.target);
+    const fill = new THREE.DirectionalLight(0x8ea6d0, 0.3);
+    fill.position.set(200, 400, 300);
+    scene.add(fill);
+    const flash = new THREE.DirectionalLight(0xdfe8ff, 0);
+    flash.position.set(-300, 700, -900);
+    scene.add(flash);
+
+    // ---- masonry ---------------------------------------------------------
+    const wallM = makeMasonryMaterial({ color: 0xbcb9b0, groundY: 5, key: 'wall' });
+    const burgM = makeMasonryMaterial({ color: 0xc2beb4, groundY: Y_B - 2, key: 'burg', damp: 0.35 });
+    const darkM = new THREE.MeshStandardMaterial({ color: 0x050505, roughness: 1 });
+    const ironM = new THREE.MeshStandardMaterial({ color: 0x2a2a2c, roughness: 0.45, metalness: 0.85 });
+    const gateM = makeTexturedMaterial('medieval_wood', { color: 0x9a8a78 });
+    const plankM = makeTexturedMaterial('weathered_planks', { color: 0x8a8070 });
+    const addMesh = (geo, m, shadow = true) => {
+      const mesh = new THREE.Mesh(geo, m);
+      mesh.castShadow = shadow; mesh.receiveShadow = true;
+      scene.add(mesh);
+      return mesh;
+    };
+
+    // ---- the Deeping Wall ----------------------------------------------
+    // runs from the Hornrock's flank to the southern cliff, bowing out
+    // into the coomb; front (coomb) is to the right of travel.
+    const WALL_PATH = [[52, -4], [26, -14], [-4, -20], [-34, -21], [-66, -16], [-98, -6], [-122, 5], [-140, 12]];
+    const wallProfile = [
+      { u: 3.6, ground: true, dy: -1.5 },
+      { u: 2.2, y: 3.5 }, { u: 1.0, y: 6.5 }, { u: 0.3, y: 9.5 }, { u: 0.0, y: 12 },
+      { u: 0.0, y: Y_TOP - 0.9 }, { u: 0.25, y: Y_TOP - 0.6 }, { u: 0.25, y: Y_TOP + 1.0 },
+      { u: -0.9, y: Y_TOP + 1.0 }, { u: -0.9, y: Y_TOP },
+      { u: -7.6, y: Y_TOP }, { u: -7.6, y: Y_TOP - 0.3 }, { u: -8.2, y: Y_TOP - 0.3 },
+      { u: -8.2, ground: true, dy: -1.5 },
+    ];
+    const deeping = sweep(WALL_PATH, wallProfile, { heightAt, step: 1.5, tile: 5.5 });
+    addMesh(deeping.geo, wallM);
+    const WP = deeping.path;
+    // where the stream passes under: the culvert
+    let tCulvert = 0.5;
+    { let best = 1e9;
+      for (let i = 0; i <= 400; i++){ const p = WP.at(i / 400); const d = Math.abs(p.x + 31); if (d < best){ best = d; tCulvert = i / 400; } } }
+    addMesh(mergeUV(battlements(WP, { u: -0.33, y: () => Y_TOP + 1.0, w: 1.2, h: 0.9, d: 1.2, spacing: 2.5 })), wallM);
+    // rear stairs down into the Deep
+    const stairGeos = [];
+    for (const ts of [0.22, 0.55, 0.84]){
+      const f = deeping.frame(ts);
+      const steps = 30;
+      for (let i = 0; i < steps; i++){
+        const along = (i + 0.5) * 0.62;
+        const y = Y_TOP - (i + 1) * 0.52;
+        const g = texBox(0.66, Y_TOP - (i * 0.52) - 2, 2.6, 3);
+        const ang = Math.atan2(f.tangent.x, f.tangent.z) + Math.PI / 2;
+        g.rotateY(ang);
+        const x = f.p.x - f.right.x * 9.5 + f.tangent.x * along, z = f.p.z - f.right.z * 9.5 + f.tangent.z * along;
+        g.translate(x, (y + 2 + 1) / 2 + 0.5, z);
+        stairGeos.push(g);
+      }
+    }
+    addMesh(mergeUV(stairGeos), wallM);
+    // the culvert: a vaulted portal at the foot of the wall, barred with iron
+    {
+      const f = deeping.frame(tCulvert);
+      const g = new THREE.Group();
+      const yb = heightAt(f.p.x + f.right.x * 2, f.p.z + f.right.z * 2) - 1;
+      g.position.set(f.p.x + f.right.x * 2.6, yb, f.p.z + f.right.z * 2.6);
+      g.rotation.y = Math.atan2(f.right.x, f.right.z);
+      const portal = new THREE.Mesh(mergeUV([
+        texBox(2.2, 8, 3.2, 4).translate(-3.6, 4, 0),
+        texBox(2.2, 8, 3.2, 4).translate(3.6, 4, 0),
+        texBox(9.4, 2.6, 3.2, 4).translate(0, 8.6, 0),
+      ]), wallM);
+      portal.castShadow = portal.receiveShadow = true;
+      g.add(portal);
+      // vault mouth (dark) with a round head
+      const mouth = new THREE.Shape();
+      mouth.moveTo(-2.5, 0); mouth.lineTo(2.5, 0); mouth.lineTo(2.5, 4.6);
+      mouth.absarc(0, 4.6, 2.5, 0, Math.PI, false); mouth.lineTo(-2.5, 0);
+      const mouthM = new THREE.Mesh(new THREE.ShapeGeometry(mouth), darkM);
+      mouthM.position.z = 0.4;
+      g.add(mouthM);
+      const ring = new THREE.Mesh(new THREE.TorusGeometry(2.7, 0.35, 6, 18, Math.PI), wallM);
+      ring.position.set(0, 4.6, 1.5);
+      g.add(ring);
+      for (let i = -4; i <= 4; i++){
+        const bar = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 6.8, 6), ironM);
+        bar.position.set(i * 0.55, 3.4, 1.45);
+        bar.castShadow = true;
+        g.add(bar);
+      }
+      for (const yy of [1.6, 4.2]){
+        const rail = new THREE.Mesh(new THREE.BoxGeometry(5.2, 0.16, 0.12), ironM);
+        rail.position.set(0, yy, 1.45);
+        g.add(rail);
+      }
+      scene.add(g);
+    }
+    // stairs cut into the Hornrock, from the wall-walk up to the Hornburg
+    {
+      const geos = [];
+      for (let i = 0; i < 20; i++){
+        const g = texBox(2.4, 0.5 + i * 0.5, 0.7, 3);
+        g.translate(55 + i * 0.3, Y_TOP + (i * 0.5 + 0.5) / 2, 1 + i * 0.66);
+        geos.push(g);
+      }
+      addMesh(mergeUV(geos), burgM);
+    }
+
+    // ---- the Hornburg -----------------------------------------------------
+    const DEG = Math.PI / 180;
+    const gateTheta = 216 * DEG;
+    const arc = (a0, a1, n = 26, inset = 0.93) => {
+      const out = [];
+      for (let i = 0; i <= n; i++) out.push(hornPoint(lerp(a0, a1, i / n), inset));
+      return out;
+    };
+    const curtainProfile = [
+      { u: 2.2, ground: true, dy: -7 },
+      { u: 0.9, y: Y_B + 1 }, { u: 0.0, y: Y_B + 4 },
+      { u: 0.0, y: Y_B + 8.4 }, { u: 0.3, y: Y_B + 8.7 }, { u: 0.3, y: Y_B + 10.3 },
+      { u: -0.9, y: Y_B + 10.3 }, { u: -0.9, y: Y_B + 9 },
+      { u: -5.2, y: Y_B + 9 }, { u: -5.2, y: Y_B - 1 },
+    ];
+    // outer curtain in two runs either side of the gate; the far end buried in the cliff
+    const runA = arc(352 * DEG, gateTheta + 6.5 * DEG); runA.unshift([158, -44]);
+    const runB = arc(gateTheta - 6.5 * DEG, 172 * DEG, 14);
+    const curtainRuns = [];
+    for (const run of [runA, runB]){
+      const sw = sweep(run, curtainProfile, { heightAt, step: 1.5, tile: 5.5 });
+      addMesh(sw.geo, burgM);
+      addMesh(mergeUV(battlements(sw.path, { u: -0.3, y: () => Y_B + 10.3, w: 1.25, h: 1.1, d: 1.2, spacing: 2.4 })), burgM);
+      curtainRuns.push(sw);
+    }
+    // lower wall on the Deep side of the rock
+    const backProfile = [
+      { u: 1.5, ground: true, dy: -6 }, { u: 0, y: Y_B + 2 }, { u: 0, y: Y_B + 6 },
+      { u: -0.8, y: Y_B + 6 }, { u: -0.8, y: Y_B + 5 }, { u: -3.2, y: Y_B + 5 }, { u: -3.2, y: Y_B - 1 },
+    ];
+    const backRun = arc(160 * DEG, 18 * DEG, 24);
+    backRun.push([158, -6]);
+    const backSw = sweep(backRun, backProfile, { heightAt, step: 1.5, tile: 5.5 });
+    addMesh(backSw.geo, burgM);
+    addMesh(mergeUV(battlements(backSw.path, { u: -0.3, y: () => Y_B + 6, w: 1.1, h: 0.9, d: 0.9, spacing: 2.3 })), burgM);
+
+    // gatehouse
+    const [gx, gz] = hornPoint(gateTheta);
+    const gn = (() => { // outward normal of the superellipse at the gate
+      const dx = gx - HR.cx, dz = gz - HR.cz;
+      const v = new THREE.Vector3(4 * dx ** 3 / HR.rx ** 4, 0, 4 * dz ** 3 / HR.rz ** 4);
+      return v.normalize();
+    })();
+    const gt = new THREE.Vector3(-gn.z, 0, gn.x);  // along the wall
+    const gate = new THREE.Group();
+    gate.position.set(gx, Y_B, gz);
+    gate.rotation.y = Math.atan2(gn.x, gn.z);      // local +z = outward
+    {
+      const parts = [];
+      for (const s of [-1, 1]){
+        parts.push(texBox(7, 26, 8.5, 5.5).translate(s * 6.6, 26 / 2 - 8, 0.8));
+        // tower merlons
+        for (let i = 0; i < 4; i++) for (const zz of [-3.8, 4.4]){
+          parts.push(texBox(1.2, 1.1, 1.1, 4).translate(s * 6.6 - 2.8 + i * 1.86, 18.55, zz + 0.8));
+        }
+      }
+      parts.push(texBox(6.4, 7.5, 8.5, 5.5).translate(0, 7.8 + 7.5 / 2, 0.8));   // over the gate passage
+      parts.push(texBox(20.4, 0.6, 9.4, 5).translate(0, 18, 0.8));                // tower-top platform
+      const gm = new THREE.Mesh(mergeUV(parts), burgM);
+      gm.castShadow = gm.receiveShadow = true;
+      gate.add(gm);
+      const passage = new THREE.Mesh(new THREE.PlaneGeometry(6.2, 7.8), darkM);
+      passage.position.set(0, 3.9, -2.2);
+      gate.add(passage);
+      // the great doors, iron-banded timber
+      for (const s of [-1, 1]){
+        const door = new THREE.Mesh(texBox(3.1, 7.6, 0.45, 3.5), gateM);
+        door.position.set(s * 1.56, 3.8, 3.6);
+        door.castShadow = door.receiveShadow = true;
+        gate.add(door);
+        for (const yy of [1.2, 3.8, 6.4]){
+          const band = new THREE.Mesh(new THREE.BoxGeometry(3.0, 0.2, 0.08), ironM);
+          band.position.set(s * 1.56, yy, 3.86);
+          gate.add(band);
+        }
+      }
+      // threshold arch moulding
+      const arch = new THREE.Mesh(new THREE.TorusGeometry(3.4, 0.4, 6, 16, Math.PI), burgM);
+      arch.position.set(0, 7.8, 5.1);
+      arch.scale.y = 0.35;
+      gate.add(arch);
+    }
+    scene.add(gate);
+
+    // the keep, with the Horn of Helm on its crown
+    const KEEP = { x: 127, z: -10 };
+    {
+      const prof = [[16.5, Y_B - 6], [15.4, Y_B], [13.4, Y_B + 14], [13, Y_B + 32], [14.2, Y_B + 33.2],
+        [14.2, Y_B + 34.4], [12.6, Y_B + 34.4], [12.2, Y_B + 52], [12.9, Y_B + 56.5], [13.6, Y_B + 57.2],
+        [13.6, Y_B + 58.4], [0.01, Y_B + 58.4]];
+      const k = new THREE.Mesh(latheTower(prof, 12, 5.5), burgM);
+      k.position.set(KEEP.x, 0, KEEP.z);
+      k.castShadow = k.receiveShadow = true;
+      scene.add(k);
+      const geos = [];
+      for (const [r, y, n] of [[14.1, Y_B + 34.4, 26], [13.5, Y_B + 58.4, 24]]){
+        for (let i = 0; i < n; i++){
+          const a = (i / n) * Math.PI * 2;
+          const g = texBox(1.3, 1.2, 0.9, 4);
+          g.rotateY(-a + Math.PI / 2);
+          g.translate(KEEP.x + Math.cos(a) * r, y + 0.6, KEEP.z + Math.sin(a) * r);
+          geos.push(g);
+        }
+      }
+      addMesh(mergeUV(geos), burgM);
+      // arrow slits and windows, some lit
+      const winLit = new THREE.MeshBasicMaterial({ color: 0xffa050 });
+      for (let i = 0; i < 12; i++){
+        const a = ((i + 0.5) / 12) * Math.PI * 2;
+        for (const [y, r, lit] of [[Y_B + 8, 14.3, false], [Y_B + 22, 13.2, i % 3 === 0], [Y_B + 42, 12.4, i % 2 === 0], [Y_B + 50, 12.25, i % 4 === 1]]){
+          const w = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 2.2), lit ? winLit : darkM);
+          w.position.set(KEEP.x + Math.cos(a) * (r + 0.05), y, KEEP.z + Math.sin(a) * (r + 0.05));
+          w.rotation.y = -a + Math.PI / 2;
+          scene.add(w);
+        }
+      }
+      // the Horn of Helm, on a timber stand facing out over the coomb
+      const horn = new THREE.Group();
+      const curve = new THREE.QuadraticBezierCurve3(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0.8, 1.6, 2.4), new THREE.Vector3(0, 1.0, 5.4));
+      const hornGeo = new THREE.TubeGeometry(curve, 20, 0.3, 10, false);
+      const pa = hornGeo.attributes.position;
+      for (let i = 0; i < pa.count; i++){
+        const t = Math.floor(i / 11) / 20;
+        const c = curve.getPoint(t);
+        const s = 0.35 + t * 1.9;    // flare toward the bell
+        pa.setXYZ(i, c.x + (pa.getX(i) - c.x) * s, c.y + (pa.getY(i) - c.y) * s, c.z + (pa.getZ(i) - c.z) * s);
+      }
+      hornGeo.computeVertexNormals();
+      horn.add(new THREE.Mesh(hornGeo, mat(0xd9ccb0, { roughness: 0.45 })));
+      for (const t of [0.15, 0.55, 0.9]){
+        const p = curve.getPoint(t);
+        const band = new THREE.Mesh(new THREE.TorusGeometry(0.34 + t * 0.6, 0.06, 6, 16), mat(0xb8913a, { roughness: 0.3, metalness: 0.9 }));
+        band.position.copy(p);
+        band.lookAt(curve.getPoint(Math.min(1, t + 0.05)).add(horn.position));
+        horn.add(band);
+      }
+      for (const s of [-1, 1]){
+        const post = new THREE.Mesh(new THREE.BoxGeometry(0.3, 2.6, 0.3), plankM);
+        post.position.set(s * 1.2, -0.9, 2.2);
+        horn.add(post);
+      }
+      horn.position.set(KEEP.x - 10, Y_B + 60.8, KEEP.z - 2);
+      horn.rotation.y = -2.25;
+      horn.traverse(o => { o.castShadow = true; });
+      scene.add(horn);
+    }
+
+    // the great hall and outbuildings in the courtyard
+    function hall(x, z, w, d, h, ry, rise){
+      const g = new THREE.Group();
+      const walls = new THREE.Mesh(texBox(w, h, d, 5), burgM);
+      walls.position.y = h / 2;
+      const roof = new THREE.Mesh(mergeUV(gableRoof(w, d, rise, 0.7, 0.35, 3)), plankM);
+      roof.position.y = h;
+      // gable ends
+      const sh = new THREE.Shape();
+      sh.moveTo(-w / 2, 0); sh.lineTo(w / 2, 0); sh.lineTo(0, rise);
+      for (const s of [-1, 1]){
+        const gab = new THREE.Mesh(new THREE.ShapeGeometry(sh), burgM);
+        gab.position.set(0, h, s * d / 2);
+        if (s < 0) gab.rotation.y = Math.PI;
+        g.add(gab);
+      }
+      const door = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 3.6), gateM);
+      door.position.set(0, 1.8, d / 2 + 0.02);
+      g.add(walls, roof, door);
+      g.position.set(x, Y_B, z);
+      g.rotation.y = ry;
+      g.traverse(o => { o.castShadow = o.receiveShadow = true; });
+      scene.add(g);
+      return g;
+    }
+    hall(100, -36, 15, 26, 9, -0.55, 7);     // the great hall
+    hall(82, -18, 7, 12, 5, 0.2, 3.5);
+    hall(118, -52, 8, 10, 5, -1.1, 3.5);
+    hall(76, -40, 6, 9, 4.5, 0.9, 3);
+
+    // ---- the causeway ------------------------------------------------------
+    const gateOut = [gx + gn.x * 7.5, gz + gn.z * 7.5];
+    const CAUSE = [[-22, -158], [0, -136], [18, -116], [gateOut[0] + gn.x * 28, gateOut[1] + gn.z * 28],
+      [gateOut[0] + gn.x * 10, gateOut[1] + gn.z * 10], gateOut];
+    {
+      const y0 = heightAt(-22, -158) + 0.4;
+      const ramp = (s) => lerp(y0, Y_B - 0.1, smoothstep(0.0, 0.92, s) * 0.6 + s * 0.4);
+      const prof = [
+        { u: 5.6, ground: true, dy: -2 }, { u: 4.3, v: -0.3 }, { u: 4.3, v: 1.1 }, { u: 3.6, v: 1.1 }, { u: 3.6, v: 0 },
+        { u: -3.6, v: 0 }, { u: -3.6, v: 1.1 }, { u: -4.3, v: 1.1 }, { u: -4.3, v: -0.3 }, { u: -5.6, ground: true, dy: -2 },
+      ];
+      const cw = sweep(CAUSE, prof, { heightAt, step: 1.2, tile: 5, baseY: (s) => ramp(s) });
+      addMesh(cw.geo, wallM);
+    }
+
+    // ---- water -------------------------------------------------------------
+    {
+      const wDeep = makeWater(scene, { shallow: 0x2a363c, deep: 0x141c20, sky: 0x2e343c, sunDir, sunColor: 0x8a6a50, flow: 2.2, scale: 0.18, opacity: 0.86 });
+      const pos = [];
+      const pts = [];
+      const step = 3;
+      for (let i = 0; i < STREAM.length - 1; i++){
+        const [ax, az] = STREAM[i], [bx, bz] = STREAM[i + 1];
+        const n = Math.ceil(Math.hypot(bx - ax, bz - az) / step);
+        for (let k = 0; k < n; k++) pts.push([lerp(ax, bx, k / n), lerp(az, bz, k / n)]);
+      }
+      pts.push(STREAM[STREAM.length - 1]);
+      for (let i = 0; i < pts.length - 1; i++){
+        const [x0, z0] = pts[i], [x1, z1] = pts[i + 1];
+        const tx = x1 - x0, tz = z1 - z0, L = Math.hypot(tx, tz);
+        const rx = -tz / L * 2.6, rz = tx / L * 2.6;
+        const y0 = floorH(x0, z0) + 0.85, y1 = floorH(x1, z1) + 0.85;
+        pos.push(x0 - rx, y0, z0 - rz, x1 - rx, y1, z1 - rz, x1 + rx, y1, z1 + rz,
+                 x0 - rx, y0, z0 - rz, x1 + rx, y1, z1 + rz, x0 + rx, y0, z0 + rz);
+      }
+      const g = new THREE.BufferGeometry();
+      g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+      wDeep.mesh.geometry = g;
+      wDeep.mesh.rotation.set(0, 0, 0);
+      wDeep.mesh.position.set(0, 0, 0);
+      wDeep.mesh.material.side = THREE.DoubleSide;
+      scene.add(wDeep.mesh); updates.push(wDeep.update);
+    }
+
+    // ---- the Glittering Caves --------------------------------------------
+    {
+      const cz = 452;
+      const cy = heightAt(4, cz - 30);
+      const sh = new THREE.Shape();
+      sh.moveTo(-9, 0); sh.lineTo(9, 0); sh.lineTo(8, 10); sh.quadraticCurveTo(0, 21, -8, 10); sh.lineTo(-9, 0);
+      const mouth = new THREE.Mesh(new THREE.ShapeGeometry(sh), darkM);
+      mouth.position.set(4, cy - 1, cz - 14);
+      scene.add(mouth);
+      const glow = new THREE.PointLight(0xffb060, 160, 60, 2);
+      glow.position.set(4, cy + 4, cz - 22);
+      scene.add(glow);
+    }
+
+    // ---- banners -------------------------------------------------------------
+    const banners = [];
+    const banner = (x, y, z, o, ry = 0) => {
+      const b = makeBanner(scene, Object.assign({ color: '#24451f', emblem: 'horse', emblemColor: '#efe9d2', w: 2.0, h: 3.8, poleH: 8, wind: 1.9 }, o));
+      b.mesh.position.set(x, y, z);
+      b.mesh.rotation.y = ry;
+      scene.add(b.mesh); updates.push(b.update);
+      banners.push(b);
+      return b;
+    };
+    banner(KEEP.x + 3, Y_B + 58.4, KEEP.z + 3, { w: 3.2, h: 6, poleH: 13 });
+    for (const sw of curtainRuns){
+      for (const t of [0.3, 0.75]){
+        const f = sw.frame(t);
+        banner(f.p.x - f.right.x * 3, Y_B + 9, f.p.z - f.right.z * 3, {}, Math.atan2(f.right.x, f.right.z));
+      }
+    }
+    for (const s of [-1, 1]){
+      const p = new THREE.Vector3(gx, Y_B + 18.3, gz).addScaledVector(gt, s * 6.6).addScaledVector(gn, 0.8);
+      banner(p.x, p.y, p.z, { w: 1.8, h: 3.6, poleH: 7 }, gate.rotation.y);
+    }
+
+    // ---- defenders -----------------------------------------------------------
+    const troops = [];
+    const faceRight = (r) => Math.atan2(r.x, r.z);
+    const HERO_T = [tCulvert - 0.035, tCulvert + 0.012];
+    {
+      // the Deeping Wall: Galadhrim at the parapet, men of Rohan among them
+      const L = WP.length;
+      const n1 = Math.floor(L / 1.12);
+      for (let i = 1; i < n1 - 1; i++){
+        const t = i / n1;
+        if (t > HERO_T[0] && t < HERO_T[1]) continue;
+        const f = deeping.frame(t);
+        const isMan = (i % 9 === 4);
+        const kind = isMan ? (rand() > 0.5 ? 'rohanSpear' : 'rohanLevy')
+          : (rand() > 0.62 ? 'elfBowDark' : (rand() > 0.85 ? 'elfSword' : 'elfBow'));
+        troops.push({ kind, x: f.p.x - f.right.x * 1.6, y: Y_TOP, z: f.p.z - f.right.z * 1.6,
+          ry: faceRight(f.right) + (rand() - 0.5) * 0.12, s: isMan ? 0.98 + rand() * 0.06 : 1 + rand() * 0.04 });
+      }
+      const n2 = Math.floor(L / 1.6);
+      for (let i = 1; i < n2 - 1; i++){
+        const t = (i + 0.5) / n2;
+        if (t > HERO_T[0] - 0.01 && t < HERO_T[1] + 0.01) continue;
+        if ([0.22, 0.55, 0.84].some(ts => Math.abs(t - ts) < 0.012)) continue;
+        const f = deeping.frame(t);
+        const kind = i % 6 === 0 ? 'rohanBow' : (rand() > 0.5 ? 'elfBow' : 'elfBowDark');
+        troops.push({ kind, x: f.p.x - f.right.x * 3.4, y: Y_TOP, z: f.p.z - f.right.z * 3.4,
+          ry: faceRight(f.right) + (rand() - 0.5) * 0.2 });
+      }
+      // the Hornburg's walls: Rohirrim
+      for (const sw of curtainRuns){
+        const n = Math.floor(sw.path.length / 1.7);
+        for (let i = 1; i < n; i++){
+          const t = i / n;
+          const f = sw.frame(t);
+          const kind = ['rohanSpear', 'rohanBow', 'rohanSpear', 'rohanLevy'][i % 4];
+          troops.push({ kind, x: f.p.x - f.right.x * 1.7, y: Y_B + 9, z: f.p.z - f.right.z * 1.7, ry: faceRight(f.right) + (rand() - 0.5) * 0.3 });
+        }
+      }
+      // reserves: an elven company drawn up in the Deep behind the wall
+      for (let r = 0; r < 8; r++){
+        for (let c = 0; c < 26; c++){
+          const x = -96 + c * 1.3 + (rand() - 0.5) * 0.1, z = 34 + r * 1.5;
+          troops.push({ kind: r === 0 ? 'elfSword' : (c % 2 ? 'elfBow' : 'elfBowDark'), x, y: heightAt(x, z), z, ry: Math.PI });
+        }
+      }
+      // and the remaining men of the Westfold by the Hornburg stair
+      for (let r = 0; r < 6; r++){
+        for (let c = 0; c < 18; c++){
+          const x = 6 + c * 1.25 + (rand() - 0.5) * 0.3, z = 28 + r * 1.4 + (rand() - 0.5) * 0.3;
+          troops.push({ kind: ['rohanSpear', 'rohanLevy', 'rohanBow'][(r + c) % 3], x, y: heightAt(x, z), z, ry: Math.PI + (rand() - 0.5) * 0.3 });
+        }
+      }
+      // courtyard garrison
+      for (let i = 0; i < 40; i++){
+        const x = 70 + rand() * 30, z = -60 + rand() * 30;
+        if (hornR(x, z) > 0.85) continue;
+        troops.push({ kind: rand() > 0.5 ? 'rohanSpear' : 'rohanLevy', x, y: Y_B, z, ry: rand() * 6.28 });
+      }
+    }
+    const defenderCount = troops.length;
+
+    // ---- the host of Isengard -------------------------------------------
+    const flames = [];
+    const ladderSpots = [];
+    const bannerSpots = [];
+    {
+      const free = (x, z) => {
+        if (x < xL(z) + 12 || x > xR(z) - 12) return false;
+        if (distToPolyline(STREAM, x, z) < 6.5) return false;
+        if (distToPolyline(CAUSE, x, z) < 10) return false;
+        if (hornR(x, z) < 1.32) return false;
+        return true;
+      };
+      const DX = 1.05, DZ = 1.28, REG_W = 30, LANE = 7.5;
+      const lines = [
+        { z: -96, rows: 12, kinds: ['urukPike'] },
+        { z: -128, rows: 16, kinds: ['urukSword'], ladders: true },
+        { z: -164, rows: 10, kinds: ['urukXbow'] },
+        { z: -190, rows: 16, kinds: ['urukPike', 'urukSword'] },
+        { z: -226, rows: 16, kinds: ['urukSword', 'urukPike'] },
+        { z: -262, rows: 16, kinds: ['urukPike', 'urukSword'] },
+        { z: -298, rows: 16, kinds: ['urukSword', 'urukPike'] },
+        { z: -334, rows: 16, kinds: ['urukPike', 'urukXbow'] },
+      ];
+      let count = 0;
+      const TARGET = 10000;
+      for (const line of lines){
+        if (count >= TARGET) break;
+        const x0 = xL(line.z) + 14, x1 = xR(line.z) - 14;
+        let regIdx = 0;
+        for (let rx = x0; rx + REG_W * DX < x1 && count < TARGET; rx += REG_W * DX + LANE, regIdx++){
+          const kind = line.kinds[regIdx % line.kinds.length];
+          let placed = 0;
+          const midX = rx + REG_W * DX / 2;
+          for (let r = 0; r < line.rows; r++){
+            for (let c = 0; c < REG_W; c++){
+              const x = rx + c * DX + (rand() - 0.5) * 0.16 + (r % 2) * 0.2;
+              const z = line.z - r * DZ + (rand() - 0.5) * 0.18;
+              if (!free(x, z)) continue;
+              let k = kind;
+              if (r === 0 && c === (REG_W >> 1)) k = 'urukCaptain';
+              else if ((r === 0 && c % 4 === 2) || rand() < 0.055) k = 'urukTorch';
+              const tx = midX * 0.6, tz = 400;
+              const ry = Math.atan2(tx - x, tz - z) + (rand() - 0.5) * 0.06;
+              const y = heightAt(x, z);
+              troops.push({ kind: k, x, y, z, ry, s: 0.97 + rand() * 0.08,
+                phase: z * 0.012 + x * 0.0015 + rand() * 0.04 });
+              if (k === 'urukTorch'){
+                const c2 = Math.cos(ry), s2 = Math.sin(ry);
+                flames.push([x + 0.41 * c2 + 0.2 * s2, y + 2.25, z - 0.41 * s2 + 0.2 * c2, 0.75]);
+              }
+              placed++; count++;
+            }
+          }
+          if (placed > 120){
+            bannerSpots.push([midX, line.z - 2.6]);
+            if (line.ladders){
+              // siege ladders raised in the lane beside each regiment
+              const lx = rx + REG_W * DX + LANE / 2, lz = line.z - 3;
+              if (free(lx, lz)) ladderSpots.push([lx, lz]);
+            }
+          }
+        }
+      }
+    }
+    // ladder teams
+    const ladderGeo = (() => {
+      const geos = [];
+      for (const s of [-1, 1]) geos.push(texBox(0.2, 19, 0.24, 4).translate(s * 0.75, 9.5, 0));
+      for (let i = 0; i < 30; i++) geos.push(texBox(1.5, 0.12, 0.12, 4).translate(0, 0.8 + i * 0.6, 0));
+      return mergeUV(geos);
+    })();
+    {
+      const im = new THREE.InstancedMesh(ladderGeo, plankM, ladderSpots.length);
+      const d = new THREE.Object3D();
+      ladderSpots.forEach(([x, z], i) => {
+        d.position.set(x, heightAt(x, z) + 0.6, z);
+        d.rotation.set(-0.18, (rand() - 0.5) * 0.2, (rand() - 0.5) * 0.06);
+        d.updateMatrix();
+        im.setMatrixAt(i, d.matrix);
+        for (let k = 0; k < 6; k++){
+          const ox = (k % 2 ? 0.9 : -0.9), oz = -0.6 - Math.floor(k / 2) * 1.2;
+          troops.push({ kind: 'urukSword', x: x + ox, y: heightAt(x + ox, z + oz), z: z + oz, ry: 0, phase: z * 0.012 });
+        }
+      });
+      im.castShadow = true; im.receiveShadow = true;
+      im.computeBoundingSphere();
+      scene.add(im);
+    }
+    // White Hand standards over the regiments
+    for (const [x, z] of bannerSpots){
+      banner(x, heightAt(x, z), z, { color: '#141518', emblem: 'hand', emblemColor: '#e4e0d6', w: 1.4, h: 2.6, poleH: 6.4, wind: 2.1 }, 0);
+    }
+    // ballistae with their grapnels, and a battering ram at the causeway foot
+    function ballista(x, z){
+      const g = new THREE.Group();
+      const wood = mat(0x4a3826);
+      const parts = [[4.6, 0.5, 2.2, 0, 1.1, 0], [0.4, 0.4, 6.4, 0, 1.9, 0.6], [6.4, 0.35, 0.35, 0, 2.2, 3.4], [0.3, 1.6, 0.3, -1.2, 1.6, -0.6], [0.3, 1.6, 0.3, 1.2, 1.6, -0.6]];
+      for (const [w, h, d, x2, y2, z2] of parts){
+        const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), wood);
+        m.position.set(x2, y2, z2); m.castShadow = true; g.add(m);
+      }
+      for (const s of [-1, 1]) for (const zz of [-0.8, 0.8]){
+        const wh = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, 0.25, 10), wood);
+        wh.rotation.z = Math.PI / 2; wh.position.set(s * 2.4, 0.6, zz); g.add(wh);
+      }
+      const grap = new THREE.Mesh(new THREE.ConeGeometry(0.25, 1.1, 4), ironM);
+      grap.rotation.x = Math.PI / 2; grap.position.set(0, 2.2, 4.2); g.add(grap);
+      g.position.set(x, heightAt(x, z), z);
+      g.rotation.x = -0.08;
+      scene.add(g);
+      for (let k = 0; k < 5; k++){
+        const ox = -2.5 + k * 1.25, oz = -2.4;
+        troops.push({ kind: k === 2 ? 'urukCaptain' : 'urukXbow', x: x + ox, y: heightAt(x + ox, z + oz), z: z + oz, ry: 0 });
+      }
+    }
+    ballista(-150, -154);
+    ballista(70, -168);
+    {
+      const ram = new THREE.Group();
+      const log = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.62, 14, 10), mat(0x3a2c1e));
+      log.rotation.x = Math.PI / 2; log.position.y = 2.0;
+      const head = new THREE.Mesh(new THREE.ConeGeometry(0.75, 1.6, 8), ironM);
+      head.rotation.x = Math.PI / 2; head.position.set(0, 2.0, 7.6);
+      ram.add(log, head);
+      ram.traverse(o => { o.castShadow = true; });
+      const rx = -28, rz = -174;
+      ram.position.set(rx, heightAt(rx, rz), rz);
+      ram.rotation.y = Math.atan2(22, 22);
+      scene.add(ram);
+      for (let k = 0; k < 12; k++){
+        const side = k % 2 ? 1.05 : -1.05, along = -6 + Math.floor(k / 2) * 2.2;
+        const c = Math.cos(ram.rotation.y), s = Math.sin(ram.rotation.y);
+        const x = rx + side * c + along * s, z = rz - side * s + along * c;
+        troops.push({ kind: 'urukSword', x, y: heightAt(x, z), z, ry: ram.rotation.y });
+      }
+    }
+    // the blasting fire of Saruman, on litters before the culvert — and the
+    // runner who will carry the torch to it
+    {
+      const fc = deeping.frame(tCulvert);
+      for (const ox of [-4, 4]){
+        const x = fc.p.x + ox, z = -84;
+        const bomb = new THREE.Mesh(new THREE.SphereGeometry(0.55, 14, 10), ironM);
+        bomb.position.set(x, heightAt(x, z) + 1.5, z);
+        bomb.castShadow = true;
+        scene.add(bomb);
+        const litter = new THREE.Mesh(new THREE.BoxGeometry(1.6, 0.2, 3.4), mat(0x3a2c1e));
+        litter.position.set(x, heightAt(x, z) + 0.9, z);
+        scene.add(litter);
+        for (const [dx, dz] of [[-0.9, -1.3], [0.9, -1.3], [-0.9, 1.3], [0.9, 1.3]]){
+          troops.push({ kind: 'urukSword', x: x + dx, y: heightAt(x + dx, z + dz), z: z + dz, ry: 0 });
+        }
+      }
+      const bx = fc.p.x, bz = -79;
+      troops.push({ kind: 'urukBerserk', x: bx, y: heightAt(bx, bz), z: bz, ry: 0, s: 1.08 });
+    }
+    // defenders cast shadows on the stone; the host is too many to bother
+    const garrison = makeTroops(troops.slice(0, defenderCount), { near: 30, mid: 130, seed: 76, shadow: true });
+    const army = makeTroops(troops.slice(defenderCount), { near: 28, mid: 120, seed: 77 });
+    scene.add(garrison.group, army.group);
+    updates.push((t) => { garrison.update(t, camera); army.update(t, camera); });
+
+    // ---- named heroes ----------------------------------------------------
+    const crowd = new Crowd(heightAt);
+    updates.push((t, dt) => crowd.update(t, dt));
+    const wallSpot = (t, u) => {
+      const f = deeping.frame(t);
+      return { x: f.p.x - f.right.x * u, z: f.p.z - f.right.z * u, ry: faceRight(f.right) };
+    };
+    const heroes = {};
+    const place = (rig, t, u, y = Y_TOP, turn = 0) => {
+      const s = wallSpot(t, u);
+      rig.position.set(s.x, y, s.z);
+      rig.rotation.y = s.ry + turn;
+      crowd.idle(rig); scene.add(rig);
+      return rig;
+    };
+    const tc = tCulvert;
+    heroes.aragorn = place(Cast.aragorn({ pose: 'guard', cloak: 0x3c3830 }), tc - 0.004, 1.6);
+    heroes.legolas = place(Cast.legolas({ pose: 'guard' }), tc - 0.011, 1.6);
+    heroes.gimli = place(Cast.gimli({ pose: 'guard' }), tc + 0.003, 1.5);
+    heroes.haldir = place(makePerson({
+      height: 1.9, bulk: 0.88, skin: 0xe4d0b8, hair: 0xe8d8a0, hairLen: 0.95,
+      tunic: 0xa8823a, pants: 0x3a3530, boots: 0x2a221a, cloak: 0x4c1f1b, prop: 'bow', glow: 0.04, pose: 'guard',
+    }), tc - 0.024, 2.4, Y_TOP, -0.5);
+    // Théoden and Gamling above the gate
+    const gtop = new THREE.Vector3(gx, Y_B + 18.3, gz).addScaledVector(gn, 3.4);
+    heroes.theoden = Cast.theoden({ pose: 'guard', helm: 'rohan' });
+    heroes.theoden.position.copy(gtop).addScaledVector(gt, -1);
+    heroes.theoden.rotation.y = gate.rotation.y;
+    const gamling = Cast.rohirrim({ pose: 'guard', beard: 0.6, hair: 0x9a8a70 });
+    gamling.position.copy(gtop).addScaledVector(gt, 1.2);
+    gamling.rotation.y = gate.rotation.y;
+    for (const r of [heroes.theoden, gamling]){ crowd.idle(r); scene.add(r); }
+    // horses in the courtyard, the last refugees going up into the caves
+    for (let i = 0; i < 6; i++){
+      const h = makeHorse({ color: [0x6b4a2f, 0x2f2620, 0x8a7458, 0x4a3826][i % 4], white: i === 2 });
+      h.position.set(86 + (i % 3) * 3.4, Y_B, -24 + Math.floor(i / 3) * 4);
+      h.rotation.y = 0.4 + rand() * 0.4;
+      crowd.idle(h); scene.add(h);
+    }
+    for (let i = 0; i < 14; i++){
+      const child = i % 4 === 0;
+      const p = makePerson({
+        height: child ? 1.15 : 1.62 + rand() * 0.12, bulk: child ? 0.9 : 0.95,
+        skin: 0xd8b498, hair: [0xb08c50, 0x6a4a28, 0xc9c2b2][i % 3], hairLen: 0.7 + rand() * 0.3,
+        robe: [0x6b5838, 0x5a4a3a, 0x7a6a50, 0x4a4436][i % 4], cloak: 0x4a4030, hoodUp: rand() > 0.6,
+      });
+      scene.add(p);
+      crowd.walk(p, DEEP_PATH.map(([x, z]) => [x + (rand() - 0.5) * 4, 0, z]), { speed: 1.0 + rand() * 0.3, loop: 'loop', offset: i / 14 });
+    }
+
+    // ---- fire --------------------------------------------------------------
+    const lights = [];
+    const fireAt = (x, y, z, size = 1.8, light = 0) => {
+      flames.push([x, y, z, size]);
+      if (light){
+        const pl = new THREE.PointLight(0xff8a3a, light, 46, 2);
+        pl.position.set(x, y + 1, z);
+        scene.add(pl);
+        lights.push({ pl, base: light, seed: lights.length * 1.7 });
+      }
+    };
+    // braziers along the wall-walk
+    for (let i = 0; i < 7; i++){
+      const t = 0.07 + i * 0.145;
+      const s = wallSpot(t, 5.2);
+      const bowl = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.35, 0.7, 10, 1, true), ironM);
+      bowl.position.set(s.x, Y_TOP + 1.4, s.z);
+      const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.12, 1.1, 6), ironM);
+      leg.position.set(s.x, Y_TOP + 0.55, s.z);
+      scene.add(bowl, leg);
+      fireAt(s.x, Y_TOP + 2.1, s.z, 2.4, i % 2 === 0 ? 150 : 0);
+      const sm = makeSmoke(scene, { x: s.x, y: Y_TOP + 2.6, z: s.z, rise: 12, spread: 3.2, size: 2.6, count: 10, opacity: 0.07, speed: 0.22, color: 0x8a8480 });
+      scene.add(sm.mesh); updates.push(sm.update);
+    }
+    for (const sw of curtainRuns){
+      for (const t of [0.15, 0.5, 0.85]){
+        const f = sw.frame(t);
+        fireAt(f.p.x - f.right.x * 4, Y_B + 11, f.p.z - f.right.z * 4, 2.6, t === 0.5 ? 260 : 0);
+      }
+    }
+    fireAt(gx + gn.x * 6 + gt.x * 4.2, Y_B + 8.5, gz + gn.z * 6 + gt.z * 4.2, 2.2, 160);
+    fireAt(gx + gn.x * 6 - gt.x * 4.2, Y_B + 8.5, gz + gn.z * 6 - gt.z * 4.2, 2.2, 0);
+    fireAt(KEEP.x - 12, Y_B + 59.7, KEEP.z - 4, 3, 220);
+    // warm pools of torchlight over the host
+    for (const [x, z] of [[-130, -110], [-60, -104], [10, -128], [-100, -190], [-20, -200], [60, -190]]){
+      const pl = new THREE.PointLight(0xff9a50, 420, 80, 2);
+      pl.position.set(x, heightAt(x, z) + 16, z);
+      scene.add(pl);
+      lights.push({ pl, base: 420, seed: x * 0.3 });
+    }
+    const fire = makeFlames(scene, flames, { size: 1.0 });
+    scene.add(fire.mesh); updates.push(fire.update);
+    updates.push((t) => {
+      for (const L of lights){
+        L.pl.intensity = L.base * (0.82 + 0.12 * Math.sin(t * 11 + L.seed) + 0.08 * Math.sin(t * 23.7 + L.seed * 3)) * fireBoost;
+      }
+    });
+
+    // ---- rain, and the storm -------------------------------------------
+    const rain = makeParticles(scene, 'rain', { count: 9000, area: [150, 90, 150], cy: 0, opacity: 0.3, fall: 30, size: 0.8, streakAngle: 0.12, seed: 31 });
+    rain.mesh.material.uniforms.uYBase.value = 0;
+    scene.add(rain.mesh); updates.push(rain.update);
+    const bolt = makeBolt(mulberry32(9));
+    scene.add(bolt);
+    const strike = (t) => {
+      // deterministic in t: one strike in each 9-second window
+      const i = Math.floor(t / 9);
+      const h = Math.abs(Math.sin(i * 91.17) * 43758.5453) % 1;
+      const ti = i * 9 + h * 6;
+      const dt = t - ti;
+      if (dt < 0 || dt > 1.2) return { f: 0, i };
+      const f = Math.exp(-dt * 7) * (0.55 + 0.45 * Math.sin(dt * 70) ** 2) + (dt > 0.12 && dt < 0.3 ? 0.5 * Math.exp(-(dt - 0.12) * 12) : 0);
+      return { f, i, h };
+    };
+
+    // ---- mood: dusk (last light) ↔ night (the storm breaks) -------------
+    const MOODS = {
+      dusk: {
+        fog: [0x535a67, 0.00085], zenith: 0x2a3446, horizon: 0x8a6a5c, sGround: 0x2a2a2c,
+        cloud: 0x5a5e68, cloudSh: 0x2a2d33, cover: 0.74, sunI: 0.5,
+        hemiSky: 0x9aa8c4, hemiGround: 0x3a3630, hemiI: 1.15, keyC: 0xf0b890, keyI: 2.0,
+        fill: 0.45, fire: 0.5, wet: 0.3, rain: 0.16, bolt: 0.5,
+        exposure: 1.55,
+        grade: { lift: [0.012, 0.014, 0.022], gamma: [1.02, 1.02, 1.04], gain: [1.04, 1.0, 0.98], sat: 0.86, temp: -0.02, bloom: 0.42, bloomThreshold: 0.82, vignette: 0.5 },
+      },
+      night: {
+        fog: [0x1c222c, 0.0013], zenith: 0x0c1018, horizon: 0x2a3140, sGround: 0x101113,
+        cloud: 0x2c313a, cloudSh: 0x0e1014, cover: 0.86, sunI: 0.0,
+        hemiSky: 0x5a6c90, hemiGround: 0x201c18, hemiI: 0.95, keyC: 0x9ab2dc, keyI: 1.1,
+        fill: 0.12, fire: 1.0, wet: 0.95, rain: 0.3, bolt: 1.0,
+        exposure: 1.9,
+        grade: { lift: [0.004, 0.008, 0.02], gamma: [1.0, 1.0, 1.05], gain: [1.06, 1.0, 1.04], sat: 0.8, temp: -0.12, bloom: 0.65, bloomThreshold: 0.7, vignette: 0.62 },
+      },
+    };
+    let mood = 0, moodTarget = 0, fireBoost = 0.55;
+    const ca = new THREE.Color(), cb = new THREE.Color();
+    const lc = (a, b, t) => ca.set(a).lerp(cb.set(b), t);
+    const D = MOODS.dusk, Nn = MOODS.night;
+    const keyDirDusk = sunDir.clone().multiplyScalar(-1).negate();   // from the west, low
+    const keyDirNight = new THREE.Vector3(0.35, 0.8, -0.45).normalize();
+    function applyMood(m, flashF){
+      scene.fog.color.copy(lc(D.fog[0], Nn.fog[0], m));
+      scene.fog.density = lerp(D.fog[1], Nn.fog[1], m);
+      const u = sky.uniforms;
+      u.uZenith.value.copy(lc(D.zenith, Nn.zenith, m)).addScalar(flashF * 0.35);
+      u.uHorizon.value.copy(lc(D.horizon, Nn.horizon, m)).addScalar(flashF * 0.25);
+      u.uGround.value.copy(lc(D.sGround, Nn.sGround, m));
+      u.uCloudCol.value.copy(lc(D.cloud, Nn.cloud, m)).addScalar(flashF * 0.55);
+      u.uCloudSh.value.copy(lc(D.cloudSh, Nn.cloudSh, m)).addScalar(flashF * 0.2);
+      u.uCover.value = lerp(D.cover, Nn.cover, m);
+      u.uSunI.value = lerp(D.sunI, Nn.sunI, m);
+      hemi.color.copy(lc(D.hemiSky, Nn.hemiSky, m));
+      hemi.groundColor.copy(lc(D.hemiGround, Nn.hemiGround, m));
+      hemi.intensity = lerp(D.hemiI, Nn.hemiI, m) + flashF * 1.6;
+      key.color.copy(lc(D.keyC, Nn.keyC, m));
+      key.intensity = lerp(D.keyI, Nn.keyI, m);
+      key.position.copy(keyDirDusk).lerp(keyDirNight, m).normalize().multiplyScalar(700).add(key.target.position);
+      fill.intensity = lerp(D.fill, Nn.fill, m);
+      flash.intensity = flashF * 5;
+      backdrop.children.forEach((r, i) => r.material.color.copy(lc(ringCols[i][0], ringCols[i][1], m)).addScalar(flashF * 0.15));
+      for (const b of banners) b.uniforms.uLight.value = lerp(0.42, 0.16, m) + flashF * 0.8;
+      fireBoost = lerp(D.fire, Nn.fire, m);
+      fire.uniforms.uBright.value = lerp(0.8, 1.15, m);
+      rain.mesh.material.uniforms.uOp.value = lerp(D.rain, Nn.rain, m);
+      const wet = lerp(D.wet, Nn.wet, m);
+      setWetness(scene, wet);
+      setTroopWetness(wet);
+    }
+    keyDirDusk.set(-sunDir.x, -sunDir.y, -sunDir.z).negate();
+    let lastWet = -1;
+    updates.push((t, dt) => {
+      mood += (moodTarget - mood) * Math.min(1, (dt || 0) * 0.8);
+      if (dt === 0) mood = moodTarget;
+      const s = strike(t);
+      const flashF = s.f * lerp(D.bolt, Nn.bolt, mood);
+      bolt.material.opacity = s.f > 0.25 ? Math.min(1, s.f) * lerp(0.5, 1, mood) : 0;
+      if (s.f > 0 && s.h !== undefined){
+        const a = (s.h - 0.5) * 1.6;
+        bolt.position.set(Math.sin(a) * 1800 - 100, 950, -Math.cos(a) * 1700 - 300);
+        bolt.rotation.y = s.i;
+      }
+      applyMood(mood, flashF);
+      // rain follows the eye
+      rain.mesh.position.set(camera.position.x, camera.position.y - 45, camera.position.z);
+    });
+
+    // ---- shots -----------------------------------------------------------
+    const fc = deeping.frame(tCulvert);
+    const aP = heroes.aragorn.position;
+    const shots = [
+      { // the host from the air, and the fortress beyond
+        pos: [[-200, 120, -620], [-120, 95, -480], [-40, 78, -360]],
+        look: [[30, 30, 0], [40, 32, 0], [50, 34, -10]],
+        dur: 22,
+      },
+      { // along the Deeping Wall, behind the elven line
+        pos: [[30, Y_TOP + 2.6, -4], [0, Y_TOP + 2.4, -10], [-36, Y_TOP + 2.4, -12], [-70, Y_TOP + 2.6, -7]],
+        look: [[0, 12, -160], [-20, 10, -170], [-50, 10, -170], [-80, 10, -160]],
+        dur: 20, ease: 'linear',
+      },
+      { // low, among the pikes, the wall towering ahead
+        pos: [[-90, heightAt(-90, -150) + 2.2, -150], [-70, heightAt(-70, -125) + 2.4, -125], [-50, heightAt(-50, -103) + 3, -103]],
+        look: [[-40, 26, 0], [-35, 26, 0], [-30, 24, 0]],
+        dur: 16,
+      },
+      { // Aragorn at the parapet; crane up to the ten thousand
+        pos: [[aP.x - 6, Y_TOP + 2, aP.z + 6], [aP.x - 9, Y_TOP + 9, aP.z + 12], [aP.x - 14, Y_TOP + 30, aP.z + 24]],
+        look: [[aP.x, Y_TOP + 1.7, aP.z], [aP.x, Y_TOP + 0, aP.z - 30], [aP.x, 6, aP.z - 170]],
+        dur: 18,
+      },
+      { // around the Hornburg: keep, hall and gate
+        pos: [[200, 120, -160], [120, 110, -190], [20, 90, -150], [-30, 75, -60]],
+        look: [[110, 45, -30], [110, 45, -30], [100, 40, -30], [95, 40, -30]],
+        dur: 24,
+      },
+      { // up the causeway to the gate
+        pos: [[-40, heightAt(-40, -175) + 6, -175], [0, 20, -142], [28, 30, -112], [gateOut[0] + gn.x * 20, Y_B + 4, gateOut[1] + gn.z * 20]],
+        look: [[30, 20, -100], [gx, Y_B + 6, gz], [gx, Y_B + 8, gz], [gx, Y_B + 9, gz]],
+        dur: 18,
+      },
+      { // the King's view from the gate tower
+        pos: [[gtop.x + gn.x * 1.5 - gt.x * 3, gtop.y + 2.2, gtop.z + gn.z * 1.5 - gt.z * 3], [gtop.x + gn.x * 3, gtop.y + 3, gtop.z + gn.z * 3]],
+        look: [[-40, 6, -220], [-10, 6, -260]],
+        dur: 14,
+      },
+    ];
+
+    // places to fly to and explore
+    const viewpoints = [
+      { name: 'Above the coomb', pos: [-160, 140, -560], look: [30, 30, 0] },
+      { name: 'The Deeping Wall', pos: [fc.p.x - fc.right.x * 5 + 8, Y_TOP + 2.3, fc.p.z - fc.right.z * 5], look: [fc.p.x - 20, 8, -180] },
+      { name: 'Aragorn, Legolas & Gimli', pos: [aP.x - 5, Y_TOP + 2.2, aP.z + 5], look: [aP.x, Y_TOP + 1.4, aP.z] },
+      { name: 'Front rank of the host', pos: [-40, heightAt(-40, -92) + 2.4, -92], look: [-45, 3, -140] },
+      { name: 'Among the pikes', pos: [-110, heightAt(-110, -205) + 2, -205], look: [-30, 22, 0] },
+      { name: 'The culvert', pos: [fc.p.x + fc.right.x * 22, heightAt(fc.p.x + fc.right.x * 22, fc.p.z + fc.right.z * 22) + 3, fc.p.z + fc.right.z * 22], look: [fc.p.x, 5, fc.p.z] },
+      { name: 'The causeway', pos: [-30, heightAt(-30, -168) + 3, -168], look: [gx, Y_B + 5, gz] },
+      { name: 'Théoden above the gate', pos: [gtop.x + gn.x * 2, gtop.y + 2, gtop.z + gn.z * 2], look: [-40, 6, -220] },
+      { name: 'The Horn of Helm', pos: [KEEP.x - 20, Y_B + 64, KEEP.z - 14], look: [KEEP.x - 10, Y_B + 60.7, KEEP.z - 2] },
+      { name: 'Haldir’s company', pos: [-70, 18, 70], look: [-60, 8, 30] },
+      { name: 'The Glittering Caves', pos: [4, heightAt(4, 400) + 6, 400], look: [4, heightAt(4, 440) + 6, 452] },
+    ];
+
+    return {
+      scene, heightAt, shots, viewpoints,
+      ready: texturesReady(),
+      grade: MOODS.dusk.grade, exposure: MOODS.dusk.exposure,
+      moods: ['dusk', 'night'],
+      get mood(){ return moodTarget ? 'night' : 'dusk'; },
+      setMood(name){
+        const M = MOODS[name === 'night' ? 'night' : 'dusk'];
+        moodTarget = name === 'night' ? 1 : 0;
+        this.grade = M.grade; this.exposure = M.exposure;
+        return this.grade;
+      },
+      stats: { defenders: defenderCount, total: troops.length },
+      update(t, dt){ for (const u of updates) u(t, dt); },
+    };
+  },
+};

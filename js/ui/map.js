@@ -12,6 +12,7 @@ const PLACES = [
   { id: 'lothlorien',  x: 0.565, y: 0.475, icon: 'wood',    label: 'Lothlórien', side: 'right' },
   { id: 'isengard',    x: 0.415, y: 0.615, icon: 'tower',   label: 'Isengard' },
   { id: 'rohan',       x: 0.545, y: 0.675, icon: 'hall',    label: 'Edoras' },
+  { id: 'helmsdeep',   x: 0.468, y: 0.705, icon: 'tower',   label: "Helm's Deep", side: 'left' },
   { id: 'minastirith', x: 0.645, y: 0.795, icon: 'city',    label: 'Minas Tirith' },
   { id: 'mordor',      x: 0.80,  y: 0.745, icon: 'eye',     label: 'Mordor' },
 ];

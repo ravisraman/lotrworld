@@ -12,11 +12,12 @@ import caradhras from './regions/caradhras.js';
 import moria from './regions/moria.js';
 import lothlorien from './regions/lothlorien.js';
 import rohan from './regions/rohan.js';
+import helmsdeep from './regions/helmsdeep.js';
 import isengard from './regions/isengard.js';
 import minastirith from './regions/minastirith.js';
 import mordor from './regions/mordor.js';
 
-const REGIONS = [shire, bree, rivendell, caradhras, moria, lothlorien, rohan, isengard, minastirith, mordor];
+const REGIONS = [shire, bree, rivendell, caradhras, moria, lothlorien, rohan, helmsdeep, isengard, minastirith, mordor];
 
 const app = document.getElementById('app');
 const renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
@@ -95,6 +96,8 @@ async function buildRegion(def){
   const ctx = { THREE, renderer, camera };
   const r = def.build(ctx);
   r.def = def;
+  // regions with photographic textures resolve `ready` once they've loaded
+  if (r.ready) await Promise.race([r.ready, wait(15000)]);
   // safety rail: no dolly position may ever dip below the terrain
   if (r.heightAt){
     for (const shot of r.shots){
@@ -123,8 +126,12 @@ async function gotoRegion(idx, opts = {}){
   shotIndex = 0;
   post.setScene(r.scene);
   post.setGrade(r.grade || {});
+  renderer.toneMappingExposure = r.exposure ?? 1.0;
   if (opts.snap) post.snapGrade();
   shots.play(r.shots[0]);
+  if (r.setMood) setMood(r.mood || 'dusk', !!opts.snap);
+  buildPlaces(r);
+  fly.heightAt = r.heightAt || null;
   rlName.textContent = def.name;
   rlSub.textContent = def.subtitle || '';
   document.querySelectorAll('#nav button').forEach((b, i) => b.classList.toggle('active', i === idx));
@@ -177,6 +184,17 @@ function waitForShot(){
   });
 }
 
+// regions with more than one look (Helm's Deep: dusk / night storm)
+function setMood(name, snap = false){
+  if (!active || !active.setMood) return;
+  const grade = active.setMood(name);
+  post.setGrade(grade || active.grade || {});
+  renderer.toneMappingExposure = active.exposure ?? 1.0;
+  if (snap) post.snapGrade();
+  const b = $('#btn-mood');
+  if (b) b.textContent = active.mood === 'night' ? 'Last Light' : 'Night Storm';
+}
+
 // ------------------------------------------------------------ interaction --
 function setFly(on){
   fly.enabled = on;
@@ -190,6 +208,42 @@ function setFly(on){
     if (active) shots.play(active.shots[shotIndex % active.shots.length]);
   }
 }
+// glide from wherever the camera is to a viewpoint, then hand over to flight
+const _fwd = new THREE.Vector3();
+function glideTo(vp){
+  stopTour();
+  fly.enabled = false;
+  $('#btn-fly').classList.remove('on');
+  const p0 = camera.position.clone();
+  camera.getWorldDirection(_fwd);
+  const l0 = p0.clone().addScaledVector(_fwd, 60);
+  const p1 = new THREE.Vector3(...vp.pos), l1 = new THREE.Vector3(...vp.look);
+  const dist = p0.distanceTo(p1);
+  const mid = p0.clone().lerp(p1, 0.5);
+  mid.y = Math.max(mid.y, p0.y, p1.y) + Math.min(120, dist * 0.18);
+  shots.play({ pos: [p0.toArray(), mid.toArray(), p1.toArray()],
+    look: [l0.toArray(), l0.clone().lerp(l1, 0.6).toArray(), l1.toArray()],
+    dur: clamp(dist / 90, 2.2, 6) });
+  mode = 'glide';
+}
+const clamp = (v, a, b) => Math.min(b, Math.max(a, v));
+const places = $('#places');
+function buildPlaces(r){
+  places.innerHTML = '';
+  places.classList.toggle('show', !!(r && r.viewpoints));
+  $('#btn-mood').style.display = r && r.setMood ? '' : 'none';
+  if (!r || !r.viewpoints) return;
+  const h = document.createElement('div');
+  h.className = 'pl-head'; h.textContent = 'Explore';
+  places.appendChild(h);
+  r.viewpoints.forEach((vp) => {
+    const b = document.createElement('button');
+    b.textContent = vp.name;
+    b.addEventListener('click', () => glideTo(vp));
+    places.appendChild(b);
+  });
+}
+
 const worldMap = initMap({
   regions: REGIONS,
   getCurrent: () => activeDef ? activeDef.id : REGIONS[0].id,
@@ -203,14 +257,17 @@ const worldMap = initMap({
 $('#btn-map').addEventListener('click', () => worldMap.toggle());
 $('#btn-tour').addEventListener('click', () => tourRunning ? stopTour() : runTour());
 $('#btn-fly').addEventListener('click', () => setFly(!fly.enabled));
+$('#btn-mood').addEventListener('click', () => setMood(active && active.mood === 'night' ? 'dusk' : 'night'));
 
 window.addEventListener('keydown', (e) => {
   if (worldMap.isOpen() && e.code !== 'KeyM' && e.code !== 'Escape') return;
-  if (e.code.startsWith('Digit')){
-    const n = (parseInt(e.code.slice(5), 10) + 9) % 10;
+  if (e.code.startsWith('Digit') || e.code === 'Minus'){
+    const n = e.code === 'Minus' ? 10 : (parseInt(e.code.slice(5), 10) + 9) % 10;
+    if (n >= REGIONS.length) return;
     stopTour(); setFly(false);
     gotoRegion(n);
   }
+  if (e.code === 'KeyN'){ setMood(active && active.mood === 'night' ? 'dusk' : 'night'); }
   if (e.code === 'KeyT'){ tourRunning ? stopTour() : runTour(); }
   if (e.code === 'KeyF'){ setFly(!fly.enabled); }
   if (e.code === 'KeyH'){ document.body.classList.toggle('hidehud'); }
@@ -234,8 +291,10 @@ window.addEventListener('resize', () => {
 
 // ------------------------------------------------------------------ loop ---
 let last = performance.now();
+let halted = false;   // test hook: stop the live loop so captures are exact
 function frame(now){
   requestAnimationFrame(frame);
+  if (halted) return;
   let dt = Math.min((now - last) / 1000, 0.05);
   last = now;
   if (frozen) dt = 0;
@@ -245,7 +304,8 @@ function frame(now){
   if (mode === 'fly') fly.update(dt);
   else {
     const finished = shots.update(dt);
-    if (finished && mode === 'ambient'){
+    if (finished && mode === 'glide'){ setFly(true); }
+    else if (finished && mode === 'ambient'){
       // ambient: cut to the next shot, looping forever
       shotIndex = (shotIndex + 1) % active.shots.length;
       shots.play(active.shots[shotIndex]);
@@ -288,12 +348,35 @@ window.ME = {
   showMap(v = true){ v ? worldMap.show() : worldMap.hide(); },
   heightAt(x, z){ return active && active.heightAt ? active.heightAt(x, z) : 0; },
   letterbox(v = true){ document.body.classList.toggle('letterbox', v); },
+  setMood(name){ setMood(name, true); },
+  halt(v = true){ halted = v; },
+  _cam(){ return camera.position; },
+  capture(type = 'image/jpeg', q = 0.9){
+    if (active){ active.update(clockT, 0); post.update(clockT, 0.016); post.render(); }
+    return renderer.domElement.toDataURL(type, q);
+  },
+  info(){
+    let tris = 0, meshes = 0;
+    const top = [];
+    if (active) active.scene.traverseVisible(o => {
+      if (!o.isMesh || !o.geometry) return;
+      const g = o.geometry;
+      const n = (g.index ? g.index.count : g.attributes.position.count) / 3 * (o.isInstancedMesh ? o.count : 1);
+      tris += n; meshes++;
+      top.push([Math.round(n), (o.isInstancedMesh ? 'inst×' + o.count : '') + ' ' + g.type + ' ' + o.material.type]);
+    });
+    top.sort((a, b) => b[0] - a[0]);
+    return { meshes, tris: Math.round(tris), top: top.slice(0, 10), calls: renderer.info.render.calls,
+      stats: active && active.stats, mood: active && active.mood };
+  },
 };
 
 // ------------------------------------------------------------------ boot ---
 (async function boot(){
   lfill.style.width = '10%';
-  await gotoRegion(0, { snap: true });
+  // index.html#helmsdeep (or any region id) opens straight into that region
+  const fromHash = REGIONS.findIndex(r => r.id === location.hash.slice(1));
+  await gotoRegion(Math.max(0, fromHash), { snap: true });
   window.ME.ready = true;
   requestAnimationFrame(frame);
 })();

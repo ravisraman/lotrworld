@@ -61,6 +61,7 @@ export class FreeFly {
     this.keys = {};
     this.baseSpeed = 18;
     this._drag = null;
+    this.heightAt = null;   // set per region: flight never goes underground
 
     dom.addEventListener('pointerdown', (e) => {
       if (!this.enabled) return;
@@ -75,6 +76,12 @@ export class FreeFly {
       this.pitch = clamp(this.pitch - dy * 0.0032, -1.45, 1.45);
     });
     dom.addEventListener('pointerup', () => { this._drag = null; });
+    // wheel: throttle up / down
+    dom.addEventListener('wheel', (e) => {
+      if (!this.enabled) return;
+      e.preventDefault();
+      this.baseSpeed = clamp(this.baseSpeed * (e.deltaY < 0 ? 1.18 : 1 / 1.18), 2, 400);
+    }, { passive: false });
     window.addEventListener('keydown', (e) => { this.keys[e.code] = true; });
     window.addEventListener('keyup', (e) => { this.keys[e.code] = false; });
   }
@@ -84,6 +91,12 @@ export class FreeFly {
   }
   update(dt){
     if (!this.enabled) return;
+    // arrow keys look around, for those without a mouse to drag
+    const look = 1.6 * dt;
+    if (this.keys['ArrowLeft']) this.yaw += look;
+    if (this.keys['ArrowRight']) this.yaw -= look;
+    if (this.keys['ArrowUp']) this.pitch = clamp(this.pitch + look, -1.45, 1.45);
+    if (this.keys['ArrowDown']) this.pitch = clamp(this.pitch - look, -1.45, 1.45);
     const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(this.pitch, this.yaw, 0, 'YXZ'));
     this.camera.quaternion.copy(q);
     const speed = this.baseSpeed * (this.keys['ShiftLeft'] || this.keys['ShiftRight'] ? 4 : 1);
@@ -99,6 +112,10 @@ export class FreeFly {
     if (move.lengthSq() > 0){
       move.normalize().multiplyScalar(speed * dt);
       this.camera.position.add(move);
+    }
+    if (this.heightAt){
+      const p = this.camera.position;
+      p.y = Math.max(p.y, this.heightAt(p.x, p.z) + 1.7);
     }
   }
 }
