@@ -1009,7 +1009,7 @@ export default {
         for (let i = 1; i < n; i++){
           const t = i / n;
           const f = sw.frame(t);
-          const kind = ['rohanSpear', 'rohanBow', 'rohanSpear', 'rohanLevy'][i % 4];
+          const kind = ['rohanSpear', 'rohanBow', 'rohanOld', 'rohanLevy'][i % 4];
           troops.push({ kind, x: f.p.x - f.right.x * 1.7, y: Y_B + 9, z: f.p.z - f.right.z * 1.7, ry: faceRight(f.right) + (rand() - 0.5) * 0.3 });
         }
       }
@@ -1024,7 +1024,10 @@ export default {
       for (let r = 0; r < 6; r++){
         for (let c = 0; c < 18; c++){
           const x = 6 + c * 1.25 + (rand() - 0.5) * 0.3, z = 28 + r * 1.4 + (rand() - 0.5) * 0.3;
-          troops.push({ kind: ['rohanSpear', 'rohanLevy', 'rohanBow'][(r + c) % 3], x, y: heightAt(x, z), z, ry: Math.PI + (rand() - 0.5) * 0.3 });
+          // old men and boys of the Westfold among the soldiers, as in the film
+          const kind = ['rohanSpear', 'rohanLevy', 'rohanOld', 'rohanBow', 'rohanOld', 'rohanLevy'][(r * 7 + c) % 6];
+          const boy = kind === 'rohanLevy' && rand() < 0.5;
+          troops.push({ kind, x, y: heightAt(x, z), z, ry: Math.PI + (rand() - 0.5) * 0.3, s: boy ? 0.84 : 0.97 + rand() * 0.05 });
         }
       }
       // courtyard garrison
@@ -1048,56 +1051,50 @@ export default {
         if (hornR(x, z) < 1.32) return false;
         return true;
       };
-      const DX = 1.05, DZ = 1.28, REG_W = 30, LANE = 3;
-      const lines = [
-        { z: -96, rows: 12, kinds: ['urukPike'] },
-        { z: -128, rows: 16, kinds: ['urukSword'], ladders: true },
-        { z: -164, rows: 10, kinds: ['urukXbow'] },
-        { z: -190, rows: 16, kinds: ['urukPike', 'urukSword'] },
-        { z: -226, rows: 16, kinds: ['urukSword', 'urukPike'] },
-        { z: -262, rows: 16, kinds: ['urukPike', 'urukSword'] },
-        { z: -298, rows: 16, kinds: ['urukSword', 'urukPike'] },
-        { z: -334, rows: 16, kinds: ['urukPike', 'urukXbow'] },
-      ];
-      let count = 0;
-      const TARGET = 10000;
-      for (const line of lines){
-        if (count >= TARGET) break;
-        const x0 = Math.max(xL(line.z) + 14, -260), x1 = Math.min(xR(line.z) - 14, 250);
-        let regIdx = 0;
-        for (let rx = x0; rx + REG_W * DX < x1 && count < TARGET; rx += REG_W * DX + LANE, regIdx++){
-          const kind = line.kinds[regIdx % line.kinds.length];
-          let placed = 0;
-          const midX = rx + REG_W * DX / 2;
-          for (let r = 0; r < line.rows; r++){
-            for (let c = 0; c < REG_W; c++){
-              const x = rx + c * DX + (rand() - 0.5) * 0.16 + (r % 2) * 0.2;
-              const z = line.z - r * DZ + (rand() - 0.5) * 0.18;
-              if (!free(x, z)) continue;
-              let k = kind;
-              if (r === 0 && c === (REG_W >> 1)) k = 'urukCaptain';
-              else if ((r === 0 && c % 4 === 2) || rand() < 0.055) k = 'urukTorch';
-              const tx = midX * 0.6, tz = 400;
-              const ry = Math.atan2(tx - x, tz - z) + (rand() - 0.5) * 0.06;
-              const y = heightAt(x, z);
-              troops.push({ kind: k, x, y, z, ry, s: 0.97 + rand() * 0.08,
-                phase: z * 0.012 + x * 0.0015 + rand() * 0.04 });
-              if (k === 'urukTorch'){
-                const c2 = Math.cos(ry), s2 = Math.sin(ry);
-                flames.push([x + 0.41 * c2 + 0.2 * s2, y + 2.25, z - 0.41 * s2 + 0.2 * c2, 0.75]);
-              }
-              placed++; count++;
-            }
-          }
-          if (placed > 120){
-            bannerSpots.push([midX, line.z - 2.6]);
-            if (line.ladders){
-              // siege ladders raised in the lane beside each regiment
-              const lx = rx + REG_W * DX + LANE / 2, lz = line.z - 3;
-              if (free(lx, lz)) ladderSpots.push([lx, lz]);
-            }
+      // One unbroken host, as in the films: a deep crescent packed shoulder to
+      // shoulder before the Deeping Wall and the gate, thinning toward the
+      // flanks — pikes in the front ranks, then shield-men and pikes mixed in
+      // drifting patches, crossbows toward the rear, torches scattered through.
+      const DX = 1.05, DZ = 1.22;
+      const X0 = -250, X1 = 245, XC = -20, HALFW = 245;
+      const front = (x) => -90 - (fbm(x * 0.03, 4.4, 2) - 0.5) * 6 - Math.max(0, x - 120) * 0.25;
+      const depth = (x) => {
+        const u = Math.min(1, Math.abs(x - XC) / HALFW);
+        return 14 + 72 * (1 - u * u) + (fbm(x * 0.02, 8.8, 2) - 0.5) * 12;
+      };
+      let row = 0;
+      for (let z = -86; z > -190; z -= DZ, row++){
+        for (let x = X0 + (row % 2) * DX * 0.5; x < X1; x += DX){
+          const zf = front(x), zb = zf - depth(x);
+          const jx = x + (rand() - 0.5) * 0.3, jz = z + (rand() - 0.5) * 0.3;
+          if (jz > zf || jz < zb) continue;
+          if (!free(jx, jz)) continue;
+          const intoRank = zf - jz;                    // metres back from the front
+          const patch = fbm(jx * 0.035 + 2, jz * 0.035, 2);
+          let k;
+          if (intoRank < 3.6) k = 'urukPike';
+          else if (jz - zb < 6 && rand() < 0.7) k = 'urukXbow';
+          else k = patch > 0.5 ? 'urukPike' : 'urukSword';
+          if (rand() < 0.006) k = 'urukCaptain';
+          else if (rand() < (intoRank < 1.3 ? 0.18 : 0.05)) k = 'urukTorch';
+          const ry = Math.atan2(XC * 0.4 - jx, 400 - jz) + (rand() - 0.5) * 0.12;
+          const y = heightAt(jx, jz);
+          troops.push({ kind: k, x: jx, y, z: jz, ry, s: 0.95 + rand() * 0.1,
+            phase: jz * 0.012 + jx * 0.0015 + rand() * 0.04 });
+          if (k === 'urukTorch'){
+            const c2 = Math.cos(ry), s2 = Math.sin(ry);
+            flames.push([jx + 0.41 * c2 + 0.2 * s2, y + 2.25, jz - 0.41 * s2 + 0.2 * c2, 0.75]);
           }
         }
+      }
+      // ladders raised along the second band, standards scattered through
+      for (let x = X0 + 14; x < X1 - 10; x += 21 + rand() * 8){
+        const z = front(x) - 9 - rand() * 4;
+        if (free(x, z) && depth(x) > 18) ladderSpots.push([x, z]);
+      }
+      for (let x = X0 + 8; x < X1; x += 16 + rand() * 14){
+        const z = front(x) - 3 - rand() * Math.max(4, depth(x) - 6);
+        if (free(x, z)) bannerSpots.push([x, z]);
       }
     }
     // ladder teams
@@ -1115,10 +1112,6 @@ export default {
         d.rotation.set(-0.18, (rand() - 0.5) * 0.2, (rand() - 0.5) * 0.06);
         d.updateMatrix();
         im.setMatrixAt(i, d.matrix);
-        for (let k = 0; k < 6; k++){
-          const ox = (k % 2 ? 0.9 : -0.9), oz = -0.6 - Math.floor(k / 2) * 1.2;
-          troops.push({ kind: 'urukSword', x: x + ox, y: heightAt(x + ox, z + oz), z: z + oz, ry: 0, phase: z * 0.012 });
-        }
       });
       im.castShadow = true; im.receiveShadow = true;
       im.computeBoundingSphere();
@@ -1189,12 +1182,19 @@ export default {
           troops.push({ kind: 'urukSword', x: x + dx, y: heightAt(x + dx, z + dz), z: z + dz, ry: 0 });
         }
       }
-      const bx = fc.p.x, bz = -79;
-      troops.push({ kind: 'urukBerserk', x: bx, y: heightAt(bx, bz), z: bz, ry: 0, s: 1.08 });
+      // the torch-bearer stands on a boulder before the host, as in the film
+      const bx = fc.p.x + 9, bz = -83;
+      const rock = new THREE.Mesh(new THREE.DodecahedronGeometry(2.2, 1), mat(0x4a4c4e, { roughness: 0.6, flatShading: true }));
+      rock.scale.set(1.3, 0.62, 1.05);
+      rock.position.set(bx, heightAt(bx, bz) + 0.25, bz);
+      rock.castShadow = rock.receiveShadow = true;
+      scene.add(rock);
+      troops.push({ kind: 'urukBerserk', x: bx, y: heightAt(bx, bz) + 1.55, z: bz, ry: 0, s: 1.1 });
+      flames.push([bx + 0.45, heightAt(bx, bz) + 1.55 + 2.6, bz + 0.2, 1.3]);
     }
     // defenders cast shadows on the stone; the host is too many to bother
     const garrison = makeTroops(troops.slice(0, defenderCount), { near: 30, mid: 130, seed: 76, shadow: true });
-    const army = makeTroops(troops.slice(defenderCount), { near: 28, mid: 120, seed: 77 });
+    const army = makeTroops(troops.slice(defenderCount), { near: 16, mid: 48, far: 150, seed: 77 });
     scene.add(garrison.group, army.group);
     // the world is built mirrored (see the end of build), so the soldiers'
     // level of detail is chosen from the camera's mirrored position
@@ -1239,7 +1239,8 @@ export default {
     }), tc - 0.024, 2.4, Y_TOP, -0.5);
     // Théoden and Gamling above the gate
     const gtop = new THREE.Vector3(gx, Y_B + 18.3, gz).addScaledVector(gn, 3.4);
-    heroes.theoden = Cast.theoden({ pose: 'guard', helm: 'rohan' });
+    // dark armour edged with gold over red sleeves, as in the films
+    heroes.theoden = Cast.theoden({ pose: 'guard', helm: 'rohan', tunic: 0x2a2826, pants: 0x221f1c, cloak: 0x4a1e1a });
     heroes.theoden.position.copy(gtop).addScaledVector(gt, -1);
     heroes.theoden.rotation.y = gate.rotation.y;
     const gamling = Cast.rohirrim({ pose: 'guard', beard: 0.6, hair: 0x9a8a70 });
@@ -1454,7 +1455,7 @@ export default {
       { name: 'The Deeping Wall', pos: [fc.p.x - fc.right.x * 5 + 8, Y_TOP + 2.3, fc.p.z - fc.right.z * 5], look: [fc.p.x - 20, 8, -180] },
       { name: 'Aragorn, Legolas & Gimli', pos: [aP.x - 5, Y_TOP + 2.2, aP.z + 5], look: [aP.x, Y_TOP + 1.4, aP.z] },
       { name: 'Front rank of the host', pos: [-40, heightAt(-40, -92) + 2.4, -92], look: [-45, 3, -140] },
-      { name: 'Among the pikes', pos: [-110, heightAt(-110, -205) + 2, -205], look: [-30, 22, 0] },
+      { name: 'Among the pikes', pos: [-70, heightAt(-70, -140) + 2.2, -140], look: [-30, 22, 0] },
       { name: 'The culvert', pos: [fc.p.x + fc.right.x * 22, heightAt(fc.p.x + fc.right.x * 22, fc.p.z + fc.right.z * 22) + 3, fc.p.z + fc.right.z * 22], look: [fc.p.x, 5, fc.p.z] },
       { name: 'The causeway', pos: [252, heightAt(252, -214) + 3, -214], look: [gx, Y_B + 5, gz] },
       { name: 'Théoden above the gate', pos: [gtop.x + gn.x * 2, gtop.y + 2, gtop.z + gn.z * 2], look: [-40, 6, -220] },

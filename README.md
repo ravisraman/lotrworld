@@ -55,11 +55,15 @@ Open **`http://localhost:8000/#helmsdeep`** to start directly at Helm's Deep
    narrows to the Glittering Caves; Helm's Dike lies far out in the coomb.
    Haldir's Galadhrim in gold scale and the last men of the Westfold line the
    walls; Aragorn, Legolas, Gimli and Haldir stand above the culvert, Théoden
-   and Gamling over the gate. Below them **ten thousand Uruk-hai** stand in
-   ordered regiments — pike blocks in front, shield-wall swordsmen with siege
-   ladders raised, crossbowmen, two ballistae, a battering ram at the
-   causeway's foot, the blasting-fire on its litters, and the torch-bearing
-   berserker before the culvert — pikes slamming the ground in a wave that
+   and Gamling over the gate, the old men and boys of the Westfold given spears
+   beside the soldiers. Below them the host of Isengard — some twenty thousand
+   figures, so the coomb reads as full as it does in the film — stands as one
+   unbroken crescent, packed shoulder to shoulder: hooked pikes in the front
+   ranks, leaning every which way, then shield-men and pikes in drifting
+   patches, crossbows at the rear, siege ladders raised throughout, two
+   ballistae, a battering ram at the causeway's foot, the blasting-fire on its
+   litters, and the berserker in his pale domed helm on a boulder before the
+   culvert — pikes slamming the ground in a wave that
    rolls back through the host, torches guttering in the rain, lightning
    showing the whole army for an instant. Toggle **overcast dusk** ↔ the
    films' teal **night storm** with `N`; the **Explore** list glides you to
@@ -98,11 +102,12 @@ Left-edge dots navigate; each region cycles its cinematic shots when idle.
 - Helm's Deep adds three engine pieces:
   - `js/engine/army.js` — armies by the thousand. Each soldier type (Uruk
     pikeman, swordsman, crossbowman, torch-bearer, captain, berserker; elven
-    archer and swordsman; Rohirrim spearman, bowman and levy) is one merged,
-    vertex-coloured mesh whose vertices are tagged by body part, animated on
-    the GPU (breathing, glances, cloaks in the wind, the pike-slam). Three
-    levels of detail per soldier are re-bucketed by camera distance into
-    instance buffers, so ~11,000 figures draw in a few dozen calls.
+    archer and swordsman; Rohirrim spearman, bowman, levy and old men) is one
+    merged, vertex-coloured mesh whose vertices are tagged by body part,
+    animated on the GPU (breathing, glances, cloaks in the wind, the
+    pike-slam, each pike's own lean). Four levels of detail per soldier are
+    re-bucketed by camera distance into instance buffers, so ~23,000 figures
+    draw in a few dozen calls.
   - `js/engine/fortify.js` — castle-building: cross-sections swept along
     paths with real-world UVs, battlements, lathe towers, gabled roofs.
   - `js/engine/textures.js` — the vendored CC0 texture sets plus shader

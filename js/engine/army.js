@@ -94,6 +94,14 @@ function urukBody(k, lod, o = {}){
     k.sph(0.17, IRON, { p: [s * 0.36, 1.5, 0], s: [1.25, 0.8, 1.15], metal: 1, seg: 7, segH: 5 });
   }
   k.cyl(0.13, 0.15, 0.12, IRON_D, { p: [0, 1.6, 0], metal: 1 });
+  if (o.tall){
+    // the berserker's helm: a tall, smooth, pale dome, eye-holes and an open maw
+    k.cyl(0.15, 0.16, 0.42, 0xb4ada0, { p: [0, 1.8, 0.02], part: HEAD, seg: 10 });
+    k.sph(0.15, 0xb4ada0, { p: [0, 2.01, 0.02], s: [1, 1.3, 1], part: HEAD, seg: 10, segH: 6 });
+    for (const sx of [-1, 1]) k.sph(0.025, 0x080706, { p: [sx * 0.05, 1.86, 0.165], s: [1, 1.3, 0.4], part: HEAD, seg: 6, segH: 4 });
+    k.box(0.09, 0.07, 0.02, 0x0c0908, { p: [0, 1.72, 0.165], part: HEAD });
+    return;
+  }
   // helm: domed, face-plate with the painted white hand and eye slit
   k.cyl(0.13, 0.16, 0.3, IRON_D, { p: [0, 1.75, 0.02], part: HEAD, metal: 1, seg: 8 });
   k.sph(0.14, IRON_D, { p: [0, 1.88, 0], s: [1, 0.6, 1], part: HEAD, metal: 1, seg: 8, segH: 4 });
@@ -120,8 +128,10 @@ function urukArms(k, lod, rightUp = 0){
 function pike(k, lod){
   if (lod === 2){ k.box(0.05, 5.2, 0.05, 0x3a2e22, { p: [0.41, 2.65, 0.17], part: ARM_R }); return; }
   k.cyl(0.026, 0.03, 5.2, 0x3a2e22, { p: [0.41, 2.62, 0.17], part: ARM_R, seg: 5 });
-  k.cone(0.07, 0.42, 0x4a4b4e, { p: [0.41, 5.42, 0.17], part: ARM_R, metal: 1, seg: 4 });
-  k.box(0.22, 0.04, 0.03, 0x4a4b4e, { p: [0.41, 5.15, 0.17], part: ARM_R, metal: 1 });
+  // the films' Uruk pike: a long blade with a barbed hook swept back on one side
+  k.cone(0.06, 0.6, 0x4a4b4e, { p: [0.41, 5.5, 0.17], part: ARM_R, metal: 1, seg: 4 });
+  k.box(0.035, 0.32, 0.02, 0x4a4b4e, { p: [0.5, 5.18, 0.17], r: [0, 0, -0.75], part: ARM_R, metal: 1 });
+  k.box(0.12, 0.05, 0.03, 0x4a4b4e, { p: [0.41, 5.2, 0.17], part: ARM_R, metal: 1 });
 }
 function urukShield(k, lod){
   // tall, tapering black shield carrying the White Hand
@@ -264,13 +274,15 @@ const KINDS = {
   urukXbow:     (k, l) => { urukBody(k, l); urukArms(k, l); crossbow(k, l); },
   urukTorch:    (k, l) => { urukBody(k, l); urukArms(k, l); urukShield(k, l); torch(k, l); },
   urukCaptain:  (k, l) => { urukBody(k, l, { crest: 0x8a1e14 }); urukArms(k, l); urukShield(k, l); urukSword(k, l); },
-  urukBerserk:  (k, l) => { urukBody(k, l, { bare: true, spikes: true }); urukArms(k, l); urukSword(k, l); },
+  urukBerserk:  (k, l) => { urukBody(k, l, { bare: true, tall: true }); urukArms(k, l); torch(k, l); },
   elfBow:       (k, l) => elf(k, l),
   elfBowDark:   (k, l) => elf(k, l, { hair: ELF_HAIR[1] }),
   elfSword:     (k, l) => elf(k, l, { sword: true, hair: ELF_HAIR[2] }),
   rohanSpear:   (k, l) => rohan(k, l),
   rohanBow:     (k, l) => rohan(k, l, { bow: true, cloak: 0x5a4a32 }),
   rohanLevy:    (k, l) => rohan(k, l, { mail: false, helm: false, tunic: 0x6b5838, cloak: 0x4a4030, shieldC: 0x6b5032 }),
+  // the old men of the Westfold, given spears (grey-headed, no mail)
+  rohanOld:     (k, l) => rohan(k, l, { mail: false, helm: false, hair: 0xb6b2a8, tunic: 0x4a4436, cloak: 0x3c3a30, shieldC: 0x5a4632 }),
 };
 // per-kind animation: pike-thumpers slam, everyone breathes and glances
 const ANIM = {
@@ -282,7 +294,13 @@ function kindGeo(kind, lod){
   const key = kind + lod;
   if (!geoCache.has(key)){
     const k = new Kit(lod === 1);
-    KINDS[kind](k, lod);
+    if (lod === 3){
+      // the horizon level: one block of the right colour, and the pike if any
+      const col = kind.startsWith('uruk') ? IRON_D : kind.startsWith('elf') ? GOLD : 0x5c5a52;
+      k.box(0.55, 1.8, 0.36, col, { p: [0, 0.9, 0], metal: kind.startsWith('rohan') ? 0 : 1 });
+      if (kind === 'urukPike') k.box(0.06, 5.4, 0.06, 0x3a2e22, { p: [0.41, 2.75, 0.17], part: ARM_R });
+      else if (kind.includes('Spear') || kind === 'rohanOld' || kind === 'rohanLevy') k.box(0.05, 2.6, 0.05, 0x4a3a28, { p: [0.33, 1.3, 0.12], part: ARM_R });
+    } else KINDS[kind](k, lod);
     geoCache.set(key, k.build());
   }
   return geoCache.get(key);
@@ -329,6 +347,13 @@ function troopMaterial(kind){
             float beat = fract(uTime * uBeat - ph);
             float lift = smoothstep(0.05, 0.45, beat) * (1.0 - smoothstep(0.82, 0.9, beat));
             transformed.y += lift * uThump;
+            // every pike leans its own way: rotate about the gripping hand
+            vec3 hp = vec3(0.41, 0.9, 0.17);
+            vec3 q = transformed - hp;
+            float az = (fract(ph * 37.13) - 0.5) * 0.34, ax = (fract(ph * 91.71) - 0.5) * 0.24;
+            q.xy = vec2(cos(az) * q.x - sin(az) * q.y, sin(az) * q.x + cos(az) * q.y);
+            q.zy = vec2(cos(ax) * q.z - sin(ax) * q.y, sin(ax) * q.z + cos(ax) * q.y);
+            transformed = q + hp;
           }
           if (part > 2.5 && part < 3.5){
             transformed.z += sin(uTime * 0.8 + ph * 9.0) * 0.02 * (1.0 + uShieldSway);
@@ -375,7 +400,7 @@ const blobGeo = new THREE.PlaneGeometry(1.1, 1.1).rotateX(-Math.PI / 2);
 // buffers are refilled — a dozen draw calls for the whole host, and only the
 // few hundred nearest carry full detail.
 export function makeTroops(list, opts = {}){
-  const o = Object.assign({ near: 45, mid: 160, blobDist: 150, shadow: false, blobs: true, seed: 5 }, opts);
+  const o = Object.assign({ near: 45, mid: 160, far: 300, blobDist: 150, shadow: false, blobs: true, seed: 5 }, opts);
   const rand = mulberry32(o.seed);
   const group = new THREE.Group();
   const dummy = new THREE.Object3D();
@@ -407,7 +432,7 @@ export function makeTroops(list, opts = {}){
       phases[i] = s.phase ?? rand();
       pos[i * 3] = s.x; pos[i * 3 + 1] = s.y; pos[i * 3 + 2] = s.z;
     });
-    const levels = [0, 1, 2].map(lod => {
+    const levels = [0, 1, 2, 3].map(lod => {
       const src = kindGeo(kind, lod), g = new THREE.BufferGeometry();
       for (const name in src.attributes) g.setAttribute(name, src.attributes[name]);
       const ph = new THREE.InstancedBufferAttribute(new Float32Array(n), 1);
@@ -436,19 +461,19 @@ export function makeTroops(list, opts = {}){
     group.add(blob);
   }
   const last = new THREE.Vector3(1e9, 0, 0);
-  const near2 = o.near * o.near, mid2 = o.mid * o.mid, blob2 = o.blobDist * o.blobDist;
+  const near2 = o.near * o.near, mid2 = o.mid * o.mid, far2 = o.far * o.far, blob2 = o.blobDist * o.blobDist;
   function rebucket(cam){
     const cx = cam.x, cy = cam.y, cz = cam.z;
     let nb = 0;
     const bm = blob ? blob.instanceMatrix.array : null;
     for (const K of kinds){
-      const c = [0, 0, 0];
+      const c = [0, 0, 0, 0];
       const L = K.levels;
       const M = L.map(m => m.instanceMatrix.array), C = L.map(m => m.instanceColor.array), P = L.map(m => m.geometry.attributes.aPhase.array);
       for (let i = 0; i < K.n; i++){
         const dx = K.pos[i * 3] - cx, dy = K.pos[i * 3 + 1] - cy, dz = K.pos[i * 3 + 2] - cz;
         const d2 = dx * dx + dy * dy + dz * dz;
-        const l = d2 < near2 ? 0 : (d2 < mid2 ? 1 : 2);
+        const l = d2 < near2 ? 0 : d2 < mid2 ? 1 : d2 < far2 ? 2 : 3;
         const j = c[l]++;
         M[l].set(K.mats.subarray(i * 16, i * 16 + 16), j * 16);
         C[l][j * 3] = K.cols[i * 3]; C[l][j * 3 + 1] = K.cols[i * 3 + 1]; C[l][j * 3 + 2] = K.cols[i * 3 + 2];
