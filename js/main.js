@@ -351,6 +351,16 @@ window.ME = {
   setMood(name){ setMood(name, true); },
   halt(v = true){ halted = v; },
   _cam(){ return camera.position; },
+  viewpoints(){ return active && active.viewpoints ? active.viewpoints : []; },
+  // debug: what does the ray through normalised screen point (x,y) hit?
+  _pick(x, y){
+    const rc = new THREE.Raycaster();
+    rc.setFromCamera(new THREE.Vector2(x, y), camera);
+    const hits = rc.intersectObjects(active.scene.children, true).slice(0, 3);
+    return hits.map(h => ({ d: +h.distance.toFixed(1), p: h.point.toArray().map(v => +v.toFixed(1)),
+      type: h.object.type, geo: h.object.geometry.type, verts: h.object.geometry.attributes.position.count,
+      mat: h.object.material.type, name: h.object.name }));
+  },
   capture(type = 'image/jpeg', q = 0.9){
     if (active){ active.update(clockT, 0); post.update(clockT, 0.016); post.render(); }
     return renderer.domElement.toDataURL(type, q);

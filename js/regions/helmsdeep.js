@@ -13,11 +13,11 @@
 import * as THREE from 'three';
 import { fbm, ridged, mulberry32, smoothstep, clamp, lerp, GLSL_FOG, fogUniforms } from '../engine/util.js';
 import { makeSky, makeMountainBackdrop } from '../engine/sky.js';
-import { makeParticles, makeBanner, makeSmoke, makeWater } from '../engine/nature.js';
+import { makeParticles, makeBanner, makeSmoke, makeWater, makeGrass, scatterRocks } from '../engine/nature.js';
 import { Cast, Crowd, makePerson, makeHorse, mat } from '../engine/characters.js';
 import { makeGroundMaterial, makeMasonryMaterial, makeTexturedMaterial, texturesReady, setWetness } from '../engine/textures.js';
 import { makeTroops, setTroopWetness } from '../engine/army.js';
-import { sweep, battlements, texBox, latheTower, gableRoof, mergeUV } from '../engine/fortify.js';
+import { sweep, battlements, texBox, latheTower, mergeUV } from '../engine/fortify.js';
 
 // ------------------------------------------------------------ dimensions --
 const Y_B = 31;      // the Hornburg's courtyard, on top of the Hornrock
@@ -44,14 +44,31 @@ function distToPolyline(pts, x, z){
   return best;
 }
 
-// valley edges: south (−x) cliff line and north (+x) cliff line
+// The valley's rim. Helm's Deep is a narrow cleft in a colossal mountain
+// front; the Deeping Coomb opens out of it as a broad bay whose flanks sweep
+// back on both sides (as in the films' establishing shots).
 function xL(z){
-  const x = z < 0 ? -118 + 0.95 * z : -118 + 0.16 * z;
-  return x + (fbm(z * 0.011, 3.7, 3) - 0.5) * 34 * (z < -40 ? 1 : 0.35);
+  // the bay flares from the gorge mouth, then runs on as a broad valley
+  const fl = Math.max(0, -25 - z);
+  const x = z < -25 ? -118 - 1.8 * Math.min(fl, 360) - 0.22 * Math.max(0, fl - 360) : -118 + 0.16 * Math.max(0, z);
+  return x + (fbm(z * 0.011, 3.7, 3) - 0.5) * 30 * (z < -40 ? 1 : 0.3);
 }
 function xR(z){
-  const x = z < -80 ? 150 - 0.95 * (z + 80) : (z < 40 ? 150 : 150 - (z - 40) * 0.25);
-  return x + (fbm(z * 0.011, 9.1, 3) - 0.5) * 34 * (z < -90 ? 1 : 0.35);
+  const fl = Math.max(0, -60 - z);
+  const x = z < -60 ? 150 + 1.8 * Math.min(fl, 330) + 0.22 * Math.max(0, fl - 330) : (z < 40 ? 150 : 150 - (z - 40) * 0.25);
+  return x + (fbm(z * 0.011, 9.1, 3) - 0.5) * 30 * (z < -90 ? 1 : 0.3);
+}
+// how far a point lies into the mountain (negative: out on the valley floor)
+function mountainD(x, z){
+  // perpendicular distance past the rim (the rim runs diagonally in the bay)
+  const cL = lerp(0.98, 0.486, smoothstep(-5, -45, z) * smoothstep(-410, -360, z));
+  const cR = lerp(0.98, 0.486, smoothstep(-40, -80, z) * smoothstep(-415, -365, z));
+  let d = Math.max((xL(z) - x) * cL, (x - xR(z)) * cR);
+  d = Math.max(d, z - (470 + (fbm(x * 0.02, 2.2, 2) - 0.5) * 40));
+  // spurs and gullies, elongated down the fall line, at two scales
+  d += (fbm(x * 0.03 + z * 0.012, z * 0.03 - x * 0.012, 4) - 0.5) * 22;
+  d += (ridged(x * 0.0065 + z * 0.004, z * 0.016 - x * 0.006, 4) - 0.45) * 90 * smoothstep(-40, 120, d);
+  return d;
 }
 function hornR(x, z){
   const a = Math.abs(x - HR.cx) / HR.rx, b = Math.abs(z - HR.cz) / HR.rz;
@@ -68,10 +85,11 @@ function peak(x, z, cx, cz, r, H){
 }
 
 function floorH(x, z){
-  let h = z < 0 ? 5 + z * 0.0085 : 5 + z * 0.03;
+  // a pale gravel fan, rising gently toward the mouth of the Deep
+  let h = z < 0 ? 5 + z * 0.012 : 5 + z * 0.03;
   const away = smoothstep(-30, -220, z);
-  h += (fbm(x * 0.007 + 3, z * 0.007 + 1, 4) - 0.5) * 7 * away;
-  h += (fbm(x * 0.06, z * 0.06, 2) - 0.5) * 0.7;
+  h += (fbm(x * 0.007 + 3, z * 0.007 + 1, 4) - 0.5) * 3.5 * away;
+  h += (fbm(x * 0.06, z * 0.06, 2) - 0.5) * 0.6;
   // Helm's Dike: an earth rampart with its ditch, breached where the host passed
   const dz = z + 690 + Math.sin(x * 0.01) * 12;
   const breach = smoothstep(26, 50, Math.abs(x + 30));
@@ -84,23 +102,28 @@ function floorH(x, z){
 
 export function heightAt(x, z){
   let h = floorH(x, z);
-  let d = Math.max(xL(z) - x, x - xR(z));
-  d = Math.max(d, z - (470 + (fbm(x * 0.02, 2.2, 2) - 0.5) * 40));
-  // buttresses and gullies, elongated down-slope so faces break into spurs
-  d += (fbm(x * 0.03 + z * 0.012, z * 0.03 - x * 0.012, 4) - 0.5) * 22;
+  const d = mountainD(x, z);
   if (d > -25){
-    // sheer near the gorge, steep broken mountainside out in the coomb
-    const sheer = smoothstep(-420, -60, z);
-    const run = lerp(95, 38, sheer);
-    const talus = smoothstep(-25, 0, d) * 7 * (0.6 + fbm(x * 0.05, z * 0.05, 2));
-    let face = lerp(70, 150, sheer) * Math.pow(smoothstep(-1, run, d), 0.85);
-    // ledges: soft terracing of the face
-    const q = 13, f = face / q;
-    face = lerp(face, (Math.floor(f) + smoothstep(0.35, 1, f - Math.floor(f))) * q, 0.55 * smoothstep(0, 20, d));
-    const upper = Math.max(0, d - run) * 0.66 * (0.7 + 0.6 * fbm(x * 0.004, z * 0.004, 3));
-    const crag = ridged(x * 0.012, z * 0.012, 5) * 110 * smoothstep(10, 140, d);
+    // sheer rock in the cleft itself; steep tussock and scree out in the bay
+    // sheer only around the cleft itself, fading out along the mountain front
+    const sheer = smoothstep(-120, -20, z) * (1 - smoothstep(240, 520, Math.abs(x - 16)));
+    const talus = smoothstep(-25, 0, d) * 6 * (0.6 + fbm(x * 0.05, z * 0.05, 2));
+    // a sheer rock wall only for the first stretch of the cleft's sides; the
+    // mountain above and around climbs at a steady ~40°
+    // (out in the bay the same rise comes gradually, so the range has no step)
+    let cliff = 230 * (Math.pow(smoothstep(-1, 30, d), 0.8) * sheer + smoothstep(30, 420, d) * (1 - sheer));
+    const q = 13, f = cliff / q;   // ledges on the cliff
+    cliff = lerp(cliff, (Math.floor(f) + smoothstep(0.35, 1, f - Math.floor(f))) * q, 0.5 * smoothstep(0, 20, d));
+    // concave mountain profile: steep from the valley floor, easing toward
+    // crests whose height wanders along the range
+    const H = 1050 * (0.62 + 0.7 * fbm(x * 0.0011 + 3, z * 0.0011 - 2, 3));
+    const t = clamp(d / 2400, 0, 1);      // ~35–44° at the foot, easing above
+    const slope = H * (1 - Math.pow(1 - t, 1.6)) + smoothstep(-6, 40, d) * 6;
+    const face = cliff + slope;
+    const crag = ridged((x * 0.8 + z * 0.6) * 0.0055 + 7, (z * 0.8 - x * 0.6) * 0.0055, 5) * 70 * smoothstep(80, 600, d);   // rotated: no grid-aligned crags
+    const high = 0;
     // the mountains fall away where the coomb opens onto the Westfold
-    h += (talus + face + upper + crag) * lerp(0.2, 1, smoothstep(-2600, -1500, z));
+    h += (talus + face + crag + high) * lerp(0.15, 1, smoothstep(-2600, -1400, z));
   }
   // the Thrihyrne, three horns above the Deep
   h += peak(x, z, -60, 1350, 260, 900) + peak(x, z, 230, 1520, 240, 840) + peak(x, z, -330, 1460, 240, 820);
@@ -133,30 +156,39 @@ function buildTerrain(size, res, cx, cz, ground, sinkInner){
     const x = pos.getX(i), y = pos.getY(i), z = pos.getZ(i);
     const slope = 1 - nrm.getY(i);
     const n1 = fbm(x * 0.02 + 4, z * 0.02, 3), n2 = fbm(x * 0.004, z * 0.004, 3);
-    let rock = smoothstep(0.16, 0.36, slope + (n1 - 0.5) * 0.12);
-    rock = Math.max(rock, smoothstep(160, 320, y) * 0.85);
+    const md = mountainD(x, z);
+    // rock on the steep faces and high crags; scree bands lower down
+    let rock = smoothstep(0.3, 0.46, slope + (n1 - 0.5) * 0.16);
+    rock = Math.max(rock, smoothstep(260, 520, y) * 0.8);
+    rock = Math.max(rock, smoothstep(0.62, 0.78, fbm(x * 0.012, z * 0.03, 3)) * smoothstep(5, 40, md) * 0.9);
+    // the coomb floor: pale river gravel
+    let trail = smoothstep(-2, -14, md) * 0.92;
+    const td = Math.min(distToPolyline(ROAD, x, z), distToPolyline(DEEP_PATH, x, z));
+    trail = Math.max(trail, smoothstep(7, 2.5, td + (n1 - 0.5) * 3));
+    if (hornR(x, z) < 0.97) trail = 0.85;   // the paved courtyard
     // trampled mud where the host stands, under the walls and on the banks
     let mud = 0;
-    if (z < -70 && z > -460) mud = smoothstep(-70, -110, z) * smoothstep(-460, -380, z) * 0.85;
-    mud = Math.max(mud, smoothstep(40, 0, Math.abs(z + 12)) * 0.6);         // the wall's foot
+    if (z < -70 && z > -460) mud = smoothstep(-70, -110, z) * smoothstep(-460, -380, z) * 0.45;
+    mud = Math.max(mud, smoothstep(40, 0, Math.abs(z + 12)) * 0.5);         // the wall's foot
     const sd = distToPolyline(STREAM, x, z);
     mud = Math.max(mud, smoothstep(10, 3, sd));
-    mud *= (0.65 + n1 * 0.6);
-    const td = Math.min(distToPolyline(ROAD, x, z), distToPolyline(DEEP_PATH, x, z));
-    let trail = smoothstep(7, 2.5, td + (n1 - 0.5) * 3);
-    if (hornR(x, z) < 0.97) trail = 0.85;   // the paved courtyard
+    mud *= (0.6 + n1 * 0.6) * smoothstep(10, -5, md);
     mud *= 1 - rock; trail *= 1 - rock;
-    const sum = mud + trail + rock;
-    if (sum > 1){ mud /= sum; trail /= sum; }
-    w[i * 3] = rock; w[i * 3 + 1] = mud; w[i * 3 + 2] = trail;
-    // tint (0.5 = neutral): sere Rohan grass going gold, cold grey rock,
-    // a dusting of snow on the high crags
+    trail = Math.min(trail, 1 - rock - mud);
+    w[i * 3] = rock; w[i * 3 + 1] = mud; w[i * 3 + 2] = Math.max(0, trail);
+    // tint (0.5 = neutral): tawny tussock on the slopes, pale grey gravel,
+    // cold grey rock, snow on the high crags
     let r = 0.5, g = 0.5, b = 0.5;
-    const dry = n2;
-    r *= 0.95 + dry * 0.25; g *= 0.95 + dry * 0.1; b *= 0.85;
-    const rk = 0.42 + n1 * 0.16;
-    r = lerp(r, rk * 1.0, rock); g = lerp(g, rk * 1.02, rock); b = lerp(b, rk * 1.06, rock);
-    const snow = smoothstep(560, 760, y + (n1 - 0.5) * 120) * (1 - smoothstep(0.55, 0.8, slope));
+    r *= 0.98 + n2 * 0.2; g *= 0.9 + n2 * 0.08; b *= 0.72;
+    const fl = smoothstep(-2, -14, md);
+    // pale river gravel, patchy: darker damp hollows and old channel beds
+    const pg = 0.4 + fbm(x * 0.012 + 9, z * 0.012, 4) * 0.2 - smoothstep(0.6, 0.75, fbm(x * 0.004, z * 0.02 + 3, 3)) * 0.08;
+    r = lerp(r, pg, fl); g = lerp(g, pg * 1.01, fl); b = lerp(b, pg * 0.98, fl);
+    // the scanned mud is red-brown; the film's wet ground is grey
+    r = lerp(r, r * 0.82, mud); b = lerp(b, b * 1.12, mud);
+    const rk = 0.44 + n1 * 0.16;
+    r = lerp(r, rk * 1.0, rock); g = lerp(g, rk * 1.02, rock); b = lerp(b, rk * 1.05, rock);
+    const snow = smoothstep(620, 820, y + (n1 - 0.5) * 140) * (1 - smoothstep(0.55, 0.8, slope));
     r = lerp(r, 1.25, snow); g = lerp(g, 1.28, snow); b = lerp(b, 1.36, snow);
     col[i * 3] = r; col[i * 3 + 1] = g; col[i * 3 + 2] = b;
   }
@@ -263,7 +295,7 @@ export default {
     scene.add(outer);
 
     // ---- sky, light, weather -------------------------------------------
-    const sunDir = new THREE.Vector3(-0.9, 0.16, -0.25).normalize();   // the last light, low over the coomb's southern rim
+    const sunDir = new THREE.Vector3(-0.7, 0.42, -0.55).normalize();   // the last light, low over the coomb's southern rim
     const sky = makeSky({
       zenith: 0x1a2130, horizon: 0x8a5a44, ground: 0x2a2a2c,
       sunDir, sunColor: 0xff9a60, sunSize: 0.012, sunHalo: 0.55, sunIntensity: 0.55,
@@ -274,11 +306,11 @@ export default {
     // distant ranges, painted in the fog's own colour so the far ground
     // dissolves into them; tinted with the mood in applyMood()
     const backdrop = makeMountainBackdrop([
-      { dist: 3300, height: 1100, color: 0x565d6a, jag: 3.4, seed: 211 },
-      { dist: 2900, height: 650, color: 0x4b525f, jag: 3.0, seed: 212, gap: [Math.PI * 1.32, Math.PI * 1.68] },
+      { dist: 4600, height: 1500, color: 0x565d6a, jag: 3.4, seed: 211 },
+      { dist: 4100, height: 900, color: 0x4b525f, jag: 3.0, seed: 212, gap: [Math.PI * 1.32, Math.PI * 1.68] },
     ]);
     scene.add(backdrop);
-    const ringCols = [[0x565d6a, 0x1a1f28], [0x4b525f, 0x161b24]];
+    const ringCols = [[0x5e656d, 0x13232e], [0x545b64, 0x0f1d27]];
 
     const hemi = new THREE.HemisphereLight(0x6f7f9a, 0x2e2a24, 0.6);
     scene.add(hemi);
@@ -298,8 +330,11 @@ export default {
     scene.add(flash);
 
     // ---- masonry ---------------------------------------------------------
+    // the films' stone is pale grey-green; the scanned set is darker, so lift it
     const wallM = makeMasonryMaterial({ color: 0xbcb9b0, groundY: 5, key: 'wall' });
     const burgM = makeMasonryMaterial({ color: 0xc2beb4, groundY: Y_B - 2, key: 'burg', damp: 0.35 });
+    wallM.color.setRGB(1.45, 1.55, 1.42);
+    burgM.color.setRGB(1.5, 1.6, 1.46);
     const darkM = new THREE.MeshStandardMaterial({ color: 0x050505, roughness: 1 });
     const ironM = new THREE.MeshStandardMaterial({ color: 0x2a2a2c, roughness: 0.45, metalness: 0.85 });
     const gateM = makeTexturedMaterial('medieval_wood', { color: 0x9a8a78 });
@@ -331,6 +366,8 @@ export default {
     { let best = 1e9;
       for (let i = 0; i <= 400; i++){ const p = WP.at(i / 400); const d = Math.abs(p.x + 31); if (d < best){ best = d; tCulvert = i / 400; } } }
     addMesh(mergeUV(battlements(WP, { u: -0.33, y: () => Y_TOP + 1.0, w: 1.2, h: 0.9, d: 1.2, spacing: 2.5 })), wallM);
+    // shallow buttress strips down the face, as on the film's wall
+    addMesh(mergeUV(battlements(WP, { u: 0.3, y: () => 9.6, w: 1.7, h: Y_TOP - 0.9 - 9.6, d: 0.7, spacing: 9.5, tile: 5 })), wallM);
     // rear stairs down into the Deep
     const stairGeos = [];
     for (const ts of [0.22, 0.55, 0.84]){
@@ -397,8 +434,13 @@ export default {
     }
 
     // ---- the Hornburg -----------------------------------------------------
+    // Following the films: a curtain of great ashlar blocks with square
+    // towers and heavy merlons, the gate on the far side from the Deeping
+    // Wall, a round inner ward, the great hall's arcaded front cut into the
+    // cliff behind, and the tall buttressed keep rising where the Deeping
+    // Wall meets the rock.
     const DEG = Math.PI / 180;
-    const gateTheta = 216 * DEG;
+    const gateTheta = 304 * DEG;
     const arc = (a0, a1, n = 26, inset = 0.93) => {
       const out = [];
       for (let i = 0; i <= n; i++) out.push(hornPoint(lerp(a0, a1, i / n), inset));
@@ -408,18 +450,37 @@ export default {
       { u: 2.2, ground: true, dy: -7 },
       { u: 0.9, y: Y_B + 1 }, { u: 0.0, y: Y_B + 4 },
       { u: 0.0, y: Y_B + 8.4 }, { u: 0.3, y: Y_B + 8.7 }, { u: 0.3, y: Y_B + 10.3 },
-      { u: -0.9, y: Y_B + 10.3 }, { u: -0.9, y: Y_B + 9 },
-      { u: -5.2, y: Y_B + 9 }, { u: -5.2, y: Y_B - 1 },
+      { u: -1.1, y: Y_B + 10.3 }, { u: -1.1, y: Y_B + 9 },
+      { u: -6.2, y: Y_B + 9 }, { u: -6.2, y: Y_B - 1 },
     ];
-    // outer curtain in two runs either side of the gate; the far end buried in the cliff
-    const runA = arc(352 * DEG, gateTheta + 6.5 * DEG); runA.unshift([158, -44]);
-    const runB = arc(gateTheta - 6.5 * DEG, 172 * DEG, 14);
+    // two runs either side of the gate; the near end buried in the cliff
+    const runA = arc(346 * DEG, gateTheta + 6.5 * DEG, 10); runA.unshift([162, -50]);
+    const runB = arc(gateTheta - 6.5 * DEG, 172 * DEG, 30);
     const curtainRuns = [];
     for (const run of [runA, runB]){
       const sw = sweep(run, curtainProfile, { heightAt, step: 1.5, tile: 5.5 });
       addMesh(sw.geo, burgM);
-      addMesh(mergeUV(battlements(sw.path, { u: -0.3, y: () => Y_B + 10.3, w: 1.25, h: 1.1, d: 1.2, spacing: 2.4 })), burgM);
+      addMesh(mergeUV(battlements(sw.path, { u: -0.4, y: () => Y_B + 10.3, w: 1.9, h: 1.5, d: 1.4, spacing: 3.2 })), burgM);
       curtainRuns.push(sw);
+    }
+    // square towers standing out from the front of the curtain
+    {
+      const geos = [];
+      for (const th of [278, 246, 212, 184]){
+        const [tx, tz] = hornPoint(th * DEG, 0.95);
+        const t = texBox(11, Y_B + 16 - 4, 11, 5.5);
+        t.translate(0, (Y_B + 16 + 4) / 2, 0);
+        const parts = [t];
+        for (let i = 0; i < 3; i++) for (const s2 of [-1, 1]){
+          parts.push(texBox(2.2, 1.6, 1.2, 4).translate(-3.6 + i * 3.6, Y_B + 16.8, s2 * 4.9));
+          parts.push(texBox(1.2, 1.6, 2.2, 4).translate(s2 * 4.9, Y_B + 16.8, -3.6 + i * 3.6));
+        }
+        const g = mergeUV(parts);
+        g.rotateY(-Math.atan2(tz - HR.cz, tx - HR.cx));
+        g.translate(tx, 0, tz);
+        geos.push(g);
+      }
+      addMesh(mergeUV(geos), burgM);
     }
     // lower wall on the Deep side of the rock
     const backProfile = [
@@ -430,7 +491,59 @@ export default {
     backRun.push([158, -6]);
     const backSw = sweep(backRun, backProfile, { heightAt, step: 1.5, tile: 5.5 });
     addMesh(backSw.geo, burgM);
-    addMesh(mergeUV(battlements(backSw.path, { u: -0.3, y: () => Y_B + 6, w: 1.1, h: 0.9, d: 0.9, spacing: 2.3 })), burgM);
+    addMesh(mergeUV(battlements(backSw.path, { u: -0.3, y: () => Y_B + 6, w: 1.5, h: 1.2, d: 1.0, spacing: 2.8 })), burgM);
+
+    // the round inner ward
+    {
+      const ring = new THREE.Mesh(latheTower([[15.5, Y_B - 1], [15.5, Y_B + 7.5], [13, Y_B + 7.5], [13, Y_B - 1]], 28, 5.5), burgM);
+      ring.position.set(104, 0, -30);
+      ring.castShadow = ring.receiveShadow = true;
+      scene.add(ring);
+      const geos = [];
+      for (let i = 0; i < 18; i++){
+        const a = (i / 18) * Math.PI * 2;
+        if (Math.abs(a - Math.PI) < 0.25) continue;   // the ward's gate faces the curtain gate
+        const g = texBox(1.8, 1.3, 2.5, 4);
+        g.rotateY(-a);
+        g.translate(104 + Math.cos(a) * 14.25, Y_B + 8.15, -30 + Math.sin(a) * 14.25);
+        geos.push(g);
+      }
+      addMesh(mergeUV(geos), burgM);
+    }
+
+    // the great hall: an arcaded front built into the cliff at the back
+    {
+      const HX = 141, z0 = -46, z1 = 6, W = z1 - z0, zc = (z0 + z1) / 2;
+      const parts = [];
+      parts.push(texBox(10, 4, W + 8, 5).translate(HX - 3, Y_B + 2, zc));            // raised terrace
+      for (let i = 0; i < 8; i++) parts.push(texBox(1.2, 0.5, 10, 3).translate(HX - 8.6 - i * 1.2, Y_B + 0.25 + (7 - i) * 0.5, zc));
+      parts.push(texBox(6, 24, W, 5.5).translate(HX + 5, Y_B + 16, zc));              // the front
+      parts.push(texBox(1.4, 1.2, W + 2, 4).translate(HX + 1.6, Y_B + 28.4, zc));     // cornice
+      parts.push(texBox(1.1, 0.8, W + 1, 4).translate(HX + 1.8, Y_B + 18.6, zc));     // string course
+      for (let i = 0; i <= 5; i++) parts.push(texBox(1.6, 14, 1.8, 4).translate(HX + 1.8, Y_B + 11, z0 + 3 + i * (W - 6) / 5));
+      const fm = new THREE.Mesh(mergeUV(parts), burgM);
+      fm.castShadow = fm.receiveShadow = true;
+      scene.add(fm);
+      const archShape = (w, h) => {
+        const sh = new THREE.Shape();
+        sh.moveTo(-w / 2, 0); sh.lineTo(w / 2, 0); sh.lineTo(w / 2, h - w / 2);
+        sh.absarc(0, h - w / 2, w / 2, 0, Math.PI, false); sh.lineTo(-w / 2, 0);
+        return new THREE.ShapeGeometry(sh, 8);
+      };
+      const winLit = new THREE.MeshBasicMaterial({ color: 0xffa860 });
+      for (let i = 0; i < 5; i++){
+        const m = new THREE.Mesh(archShape(6.2, 10), darkM);
+        m.position.set(HX + 1.95, Y_B + 4, z0 + 3 + (i + 0.5) * (W - 6) / 5);
+        m.rotation.y = -Math.PI / 2;
+        scene.add(m);
+      }
+      for (let i = 0; i < 12; i++){
+        const m = new THREE.Mesh(archShape(1.7, 3.6), i % 3 === 1 ? winLit : darkM);
+        m.position.set(HX + 1.95, Y_B + 21, z0 + 3 + (i + 0.5) * (W - 6) / 12);
+        m.rotation.y = -Math.PI / 2;
+        scene.add(m);
+      }
+    }
 
     // gatehouse
     const [gx, gz] = hornPoint(gateTheta);
@@ -447,9 +560,8 @@ export default {
       const parts = [];
       for (const s of [-1, 1]){
         parts.push(texBox(7, 26, 8.5, 5.5).translate(s * 6.6, 26 / 2 - 8, 0.8));
-        // tower merlons
-        for (let i = 0; i < 4; i++) for (const zz of [-3.8, 4.4]){
-          parts.push(texBox(1.2, 1.1, 1.1, 4).translate(s * 6.6 - 2.8 + i * 1.86, 18.55, zz + 0.8));
+        for (let i = 0; i < 3; i++) for (const zz of [-3.6, 4.2]){
+          parts.push(texBox(1.8, 1.5, 1.2, 4).translate(s * 6.6 - 2.4 + i * 2.4, 18.75, zz + 0.8));
         }
       }
       parts.push(texBox(6.4, 7.5, 8.5, 5.5).translate(0, 7.8 + 7.5 / 2, 0.8));   // over the gate passage
@@ -480,39 +592,53 @@ export default {
     }
     scene.add(gate);
 
-    // the keep, with the Horn of Helm on its crown
-    const KEEP = { x: 127, z: -10 };
+    // the keep: a tall, buttressed square tower narrowing in stages to a spire
+    const KEEP = { x: 68, z: -14 };
+    const KEEP_GALLERY = Y_B + 78;
+    const KS = 1.4;   // horizontal scale of the keep
     {
-      const prof = [[16.5, Y_B - 6], [15.4, Y_B], [13.4, Y_B + 14], [13, Y_B + 32], [14.2, Y_B + 33.2],
-        [14.2, Y_B + 34.4], [12.6, Y_B + 34.4], [12.2, Y_B + 52], [12.9, Y_B + 56.5], [13.6, Y_B + 57.2],
-        [13.6, Y_B + 58.4], [0.01, Y_B + 58.4]];
-      const k = new THREE.Mesh(latheTower(prof, 12, 5.5), burgM);
-      k.position.set(KEEP.x, 0, KEEP.z);
-      k.castShadow = k.receiveShadow = true;
-      scene.add(k);
-      const geos = [];
-      for (const [r, y, n] of [[14.1, Y_B + 34.4, 26], [13.5, Y_B + 58.4, 24]]){
-        for (let i = 0; i < n; i++){
-          const a = (i / n) * Math.PI * 2;
-          const g = texBox(1.3, 1.2, 0.9, 4);
-          g.rotateY(-a + Math.PI / 2);
-          g.translate(KEEP.x + Math.cos(a) * r, y + 0.6, KEEP.z + Math.sin(a) * r);
-          geos.push(g);
+      const P = [];
+      const at = (g, x, y, z) => { g.translate(KEEP.x + x, y, KEEP.z + z); P.push(g); };
+      at(texBox(13, 56, 13, 5.5), 0, Y_B + 24, 0);                         // stage one
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]){
+        at(texBox(3.6, 62, 3.6, 5.5), sx * 6.4, Y_B + 27, sz * 6.4);        // corner buttresses
+        const cap = new THREE.ConeGeometry(2.6, 4, 4).rotateY(Math.PI / 4);
+        at(cap, sx * 6.4, Y_B + 60, sz * 6.4);
+      }
+      for (const f of [0, 1, 2, 3]){                                         // ribs on each face
+        for (const o of [-2.4, 2.4]){
+          const g = texBox(1.1, 50, 0.7, 5);
+          g.translate(o, 0, 6.75);
+          g.rotateY(f * Math.PI / 2);
+          at(g, 0, Y_B + 25, 0);
         }
       }
-      addMesh(mergeUV(geos), burgM);
-      // arrow slits and windows, some lit
+      at(texBox(10.4, 26, 10.4, 5.5), 0, Y_B + 65, 0);                     // stage two
+      for (const sx of [-1, 1]) for (const sz of [-1, 1]) at(texBox(2.4, 24, 2.4, 5), sx * 5.1, Y_B + 66, sz * 5.1);
+      at(texBox(13.6, 1, 13.6, 5), 0, KEEP_GALLERY + 0.5, 0);              // gallery of the Horn
+      for (let i = 0; i < 5; i++) for (const s2 of [-1, 1]){
+        at(texBox(1.6, 1.4, 0.9, 4), -5.4 + i * 2.7, KEEP_GALLERY + 1.7, s2 * 6.4);
+        at(texBox(0.9, 1.4, 1.6, 4), s2 * 6.4, KEEP_GALLERY + 1.7, -5.4 + i * 2.7);
+      }
+      at(texBox(7.4, 14, 7.4, 5), 0, KEEP_GALLERY + 7, 0);                 // stage three
+      at(new THREE.ConeGeometry(5.6, 15, 4).rotateY(Math.PI / 4), 0, KEEP_GALLERY + 21.5, 0);   // spire
+      // the films' keep is massive; widen the whole stack about its axis
+      const kg = mergeUV(P).translate(-KEEP.x, 0, -KEEP.z).scale(KS, 1, KS).translate(KEEP.x, 0, KEEP.z);
+      const k = new THREE.Mesh(kg, burgM);
+      k.castShadow = k.receiveShadow = true;
+      scene.add(k);
+      // arrow slits, a few lit
       const winLit = new THREE.MeshBasicMaterial({ color: 0xffa050 });
-      for (let i = 0; i < 12; i++){
-        const a = ((i + 0.5) / 12) * Math.PI * 2;
-        for (const [y, r, lit] of [[Y_B + 8, 14.3, false], [Y_B + 22, 13.2, i % 3 === 0], [Y_B + 42, 12.4, i % 2 === 0], [Y_B + 50, 12.25, i % 4 === 1]]){
-          const w = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 2.2), lit ? winLit : darkM);
-          w.position.set(KEEP.x + Math.cos(a) * (r + 0.05), y, KEEP.z + Math.sin(a) * (r + 0.05));
-          w.rotation.y = -a + Math.PI / 2;
+      for (let f = 0; f < 4; f++){
+        for (const [y, half, lit] of [[Y_B + 14, 6.55, false], [Y_B + 30, 6.55, f % 2 === 0], [Y_B + 44, 6.55, false], [Y_B + 62, 5.25, f !== 1], [KEEP_GALLERY + 8, 3.75, f === 2]]){
+          const w = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 2.6), lit ? winLit : darkM);
+          const a = f * Math.PI / 2;
+          w.position.set(KEEP.x + Math.sin(a) * (half * KS + 0.03), y, KEEP.z + Math.cos(a) * (half * KS + 0.03));
+          w.rotation.y = a;
           scene.add(w);
         }
       }
-      // the Horn of Helm, on a timber stand facing out over the coomb
+      // the Horn of Helm, on its stand in the gallery, facing out over the coomb
       const horn = new THREE.Group();
       const curve = new THREE.QuadraticBezierCurve3(new THREE.Vector3(0, 0, 0), new THREE.Vector3(0.8, 1.6, 2.4), new THREE.Vector3(0, 1.0, 5.4));
       const hornGeo = new THREE.TubeGeometry(curve, 20, 0.3, 10, false);
@@ -537,48 +663,20 @@ export default {
         post.position.set(s * 1.2, -0.9, 2.2);
         horn.add(post);
       }
-      horn.position.set(KEEP.x - 10, Y_B + 60.8, KEEP.z - 2);
-      horn.rotation.y = -2.25;
+      horn.position.set(KEEP.x - 1, KEEP_GALLERY + 3.4, KEEP.z - 4);
+      horn.rotation.y = Math.PI * 0.95;
+      horn.scale.setScalar(0.8);
       horn.traverse(o => { o.castShadow = true; });
       scene.add(horn);
     }
 
-    // the great hall and outbuildings in the courtyard
-    function hall(x, z, w, d, h, ry, rise){
-      const g = new THREE.Group();
-      const walls = new THREE.Mesh(texBox(w, h, d, 5), burgM);
-      walls.position.y = h / 2;
-      const roof = new THREE.Mesh(mergeUV(gableRoof(w, d, rise, 0.7, 0.35, 3)), plankM);
-      roof.position.y = h;
-      // gable ends
-      const sh = new THREE.Shape();
-      sh.moveTo(-w / 2, 0); sh.lineTo(w / 2, 0); sh.lineTo(0, rise);
-      for (const s of [-1, 1]){
-        const gab = new THREE.Mesh(new THREE.ShapeGeometry(sh), burgM);
-        gab.position.set(0, h, s * d / 2);
-        if (s < 0) gab.rotation.y = Math.PI;
-        g.add(gab);
-      }
-      const door = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 3.6), gateM);
-      door.position.set(0, 1.8, d / 2 + 0.02);
-      g.add(walls, roof, door);
-      g.position.set(x, Y_B, z);
-      g.rotation.y = ry;
-      g.traverse(o => { o.castShadow = o.receiveShadow = true; });
-      scene.add(g);
-      return g;
-    }
-    hall(100, -36, 15, 26, 9, -0.55, 7);     // the great hall
-    hall(82, -18, 7, 12, 5, 0.2, 3.5);
-    hall(118, -52, 8, 10, 5, -1.1, 3.5);
-    hall(76, -40, 6, 9, 4.5, 0.9, 3);
-
     // ---- the causeway ------------------------------------------------------
+    // from the coomb floor along the toe of the northern cliff, up to the gate
     const gateOut = [gx + gn.x * 7.5, gz + gn.z * 7.5];
-    const CAUSE = [[-22, -158], [0, -136], [18, -116], [gateOut[0] + gn.x * 28, gateOut[1] + gn.z * 28],
+    const CAUSE = [[236, -196], [206, -166], [176, -134], [gateOut[0] + gn.x * 26, gateOut[1] + gn.z * 26],
       [gateOut[0] + gn.x * 10, gateOut[1] + gn.z * 10], gateOut];
     {
-      const y0 = heightAt(-22, -158) + 0.4;
+      const y0 = heightAt(CAUSE[0][0], CAUSE[0][1]) + 0.4;
       const ramp = (s) => lerp(y0, Y_B - 0.1, smoothstep(0.0, 0.92, s) * 0.6 + s * 0.4);
       const prof = [
         { u: 5.6, ground: true, dy: -2 }, { u: 4.3, v: -0.3 }, { u: 4.3, v: 1.1 }, { u: 3.6, v: 1.1 }, { u: 3.6, v: 0 },
@@ -617,6 +715,29 @@ export default {
       scene.add(wDeep.mesh); updates.push(wDeep.update);
     }
 
+    // ---- tussock and stones on the coomb's gravel ------------------------
+    const tussock = makeGrass(scene, {
+      count: 26000, area: 1400, cx: 0, cz: -560, heightAt,
+      mask: (x, z) => {
+        if (mountainD(x, z) > 30) return 0;
+        if (z > -60 && z < 40) return 0;                    // the trampled ground under the wall
+        if (z < -80 && z > -360 && x > -280 && x < 260) return 0.05;   // where the host stands
+        return 0.35 * smoothstep(0.35, 0.7, fbm(x * 0.02, z * 0.02, 3));
+      },
+      colorA: 0x2e2a1e, colorB: 0x433b28, height: 0.75, windAmp: 0.35, windFreq: 1.6,
+    });
+    scene.add(tussock.mesh); updates.push(tussock.update);
+    {
+      const r2 = mulberry32(55), spots = [];
+      while (spots.length < 900){
+        const x = (r2() - 0.5) * 1400, z = -1000 + r2() * 960;
+        if (mountainD(x, z) > 5 || distToPolyline(STREAM, x, z) < 6) continue;
+        if (z < -80 && z > -360 && x > -280 && x < 260 && r2() > 0.15) continue;
+        spots.push({ x, z, s: 0.25 + r2() * r2() * 1.6 });
+      }
+      scene.add(scatterRocks(spots, { heightAt, color: 0x8a8880, seed: 56 }));
+    }
+
     // ---- the Glittering Caves --------------------------------------------
     {
       const cz = 452;
@@ -641,7 +762,7 @@ export default {
       banners.push(b);
       return b;
     };
-    banner(KEEP.x + 3, Y_B + 58.4, KEEP.z + 3, { w: 3.2, h: 6, poleH: 13 });
+    banner(KEEP.x + 7.8, KEEP_GALLERY + 1, KEEP.z + 7.8, { w: 3.0, h: 5.6, poleH: 11 });
     for (const sw of curtainRuns){
       for (const t of [0.3, 0.75]){
         const f = sw.frame(t);
@@ -707,7 +828,7 @@ export default {
       }
       // courtyard garrison
       for (let i = 0; i < 40; i++){
-        const x = 70 + rand() * 30, z = -60 + rand() * 30;
+        const x = 70 + rand() * 18, z = -58 + rand() * 30;
         if (hornR(x, z) > 0.85) continue;
         troops.push({ kind: rand() > 0.5 ? 'rohanSpear' : 'rohanLevy', x, y: Y_B, z, ry: rand() * 6.28 });
       }
@@ -726,7 +847,7 @@ export default {
         if (hornR(x, z) < 1.32) return false;
         return true;
       };
-      const DX = 1.05, DZ = 1.28, REG_W = 30, LANE = 7.5;
+      const DX = 1.05, DZ = 1.28, REG_W = 30, LANE = 3;
       const lines = [
         { z: -96, rows: 12, kinds: ['urukPike'] },
         { z: -128, rows: 16, kinds: ['urukSword'], ladders: true },
@@ -741,7 +862,7 @@ export default {
       const TARGET = 10000;
       for (const line of lines){
         if (count >= TARGET) break;
-        const x0 = xL(line.z) + 14, x1 = xR(line.z) - 14;
+        const x0 = Math.max(xL(line.z) + 14, -260), x1 = Math.min(xR(line.z) - 14, 250);
         let regIdx = 0;
         for (let rx = x0; rx + REG_W * DX < x1 && count < TARGET; rx += REG_W * DX + LANE, regIdx++){
           const kind = line.kinds[regIdx % line.kinds.length];
@@ -839,9 +960,9 @@ export default {
       head.rotation.x = Math.PI / 2; head.position.set(0, 2.0, 7.6);
       ram.add(log, head);
       ram.traverse(o => { o.castShadow = true; });
-      const rx = -28, rz = -174;
+      const rx = 226, rz = -214;
       ram.position.set(rx, heightAt(rx, rz), rz);
-      ram.rotation.y = Math.atan2(22, 22);
+      ram.rotation.y = Math.atan2(-20, 48);
       scene.add(ram);
       for (let k = 0; k < 12; k++){
         const side = k % 2 ? 1.05 : -1.05, along = -6 + Math.floor(k / 2) * 2.2;
@@ -874,7 +995,13 @@ export default {
     const garrison = makeTroops(troops.slice(0, defenderCount), { near: 30, mid: 130, seed: 76, shadow: true });
     const army = makeTroops(troops.slice(defenderCount), { near: 28, mid: 120, seed: 77 });
     scene.add(garrison.group, army.group);
-    updates.push((t) => { garrison.update(t, camera); army.update(t, camera); });
+    // the world is built mirrored (see the end of build), so the soldiers'
+    // level of detail is chosen from the camera's mirrored position
+    const localCam = { position: new THREE.Vector3() };
+    updates.push((t) => {
+      localCam.position.set(-camera.position.x, camera.position.y, camera.position.z);
+      garrison.update(t, localCam); army.update(t, localCam);
+    });
 
     // ---- named heroes ----------------------------------------------------
     const crowd = new Crowd(heightAt);
@@ -911,7 +1038,7 @@ export default {
     // horses in the courtyard, the last refugees going up into the caves
     for (let i = 0; i < 6; i++){
       const h = makeHorse({ color: [0x6b4a2f, 0x2f2620, 0x8a7458, 0x4a3826][i % 4], white: i === 2 });
-      h.position.set(86 + (i % 3) * 3.4, Y_B, -24 + Math.floor(i / 3) * 4);
+      h.position.set(118 + (i % 3) * 3.4, Y_B, -56 + Math.floor(i / 3) * 4);
       h.rotation.y = 0.4 + rand() * 0.4;
       crowd.idle(h); scene.add(h);
     }
@@ -958,7 +1085,7 @@ export default {
     }
     fireAt(gx + gn.x * 6 + gt.x * 4.2, Y_B + 8.5, gz + gn.z * 6 + gt.z * 4.2, 2.2, 160);
     fireAt(gx + gn.x * 6 - gt.x * 4.2, Y_B + 8.5, gz + gn.z * 6 - gt.z * 4.2, 2.2, 0);
-    fireAt(KEEP.x - 12, Y_B + 59.7, KEEP.z - 4, 3, 220);
+    fireAt(KEEP.x - 7.6, KEEP_GALLERY + 2.2, KEEP.z - 7.6, 3, 220);
     // warm pools of torchlight over the host
     for (const [x, z] of [[-130, -110], [-60, -104], [10, -128], [-100, -190], [-20, -200], [60, -190]]){
       const pl = new THREE.PointLight(0xff9a50, 420, 80, 2);
@@ -994,20 +1121,20 @@ export default {
     // ---- mood: dusk (last light) ↔ night (the storm breaks) -------------
     const MOODS = {
       dusk: {
-        fog: [0x535a67, 0.00085], zenith: 0x2a3446, horizon: 0x8a6a5c, sGround: 0x2a2a2c,
-        cloud: 0x5a5e68, cloudSh: 0x2a2d33, cover: 0.74, sunI: 0.5,
-        hemiSky: 0x9aa8c4, hemiGround: 0x3a3630, hemiI: 1.15, keyC: 0xf0b890, keyI: 2.0,
-        fill: 0.45, fire: 0.5, wet: 0.3, rain: 0.16, bolt: 0.5,
+        fog: [0x5d646c, 0.00024], zenith: 0x34404e, horizon: 0x8a8580, sGround: 0x2a2a2c,
+        cloud: 0x6a6e74, cloudSh: 0x30343a, cover: 0.8, sunI: 0.35,
+        hemiSky: 0xb2bec8, hemiGround: 0x44443e, hemiI: 1.4, keyC: 0xd0d2d0, keyI: 1.9,
+        fill: 0.4, fire: 0.5, wet: 0.3, rain: 0.16, bolt: 0.5,
         exposure: 1.55,
-        grade: { lift: [0.012, 0.014, 0.022], gamma: [1.02, 1.02, 1.04], gain: [1.04, 1.0, 0.98], sat: 0.86, temp: -0.02, bloom: 0.42, bloomThreshold: 0.82, vignette: 0.5 },
+        grade: { lift: [0.01, 0.014, 0.016], gamma: [1.02, 1.03, 1.03], gain: [0.98, 1.02, 1.0], sat: 0.8, temp: -0.08, bloom: 0.4, bloomThreshold: 0.84, vignette: 0.5 },
       },
       night: {
-        fog: [0x1c222c, 0.0013], zenith: 0x0c1018, horizon: 0x2a3140, sGround: 0x101113,
-        cloud: 0x2c313a, cloudSh: 0x0e1014, cover: 0.86, sunI: 0.0,
-        hemiSky: 0x5a6c90, hemiGround: 0x201c18, hemiI: 0.95, keyC: 0x9ab2dc, keyI: 1.1,
-        fill: 0.12, fire: 1.0, wet: 0.95, rain: 0.3, bolt: 1.0,
+        fog: [0x0e1c26, 0.00135], zenith: 0x06111a, horizon: 0x1a3040, sGround: 0x0b1014,
+        cloud: 0x1c2d3a, cloudSh: 0x08111a, cover: 0.86, sunI: 0.0,
+        hemiSky: 0x4a7898, hemiGround: 0x141a1c, hemiI: 1.0, keyC: 0x8cc4e6, keyI: 1.15,
+        fill: 0.14, fire: 1.0, wet: 0.95, rain: 0.42, bolt: 1.0,
         exposure: 1.9,
-        grade: { lift: [0.004, 0.008, 0.02], gamma: [1.0, 1.0, 1.05], gain: [1.06, 1.0, 1.04], sat: 0.8, temp: -0.12, bloom: 0.65, bloomThreshold: 0.7, vignette: 0.62 },
+        grade: { lift: [0.0, 0.01, 0.022], gamma: [1.0, 1.01, 1.04], gain: [0.94, 1.02, 1.12], sat: 0.95, temp: -0.28, bloom: 0.65, bloomThreshold: 0.7, vignette: 0.62 },
       },
     };
     let mood = 0, moodTarget = 0, fireBoost = 0.55;
@@ -1036,7 +1163,10 @@ export default {
       fill.intensity = lerp(D.fill, Nn.fill, m);
       flash.intensity = flashF * 5;
       backdrop.children.forEach((r, i) => r.material.color.copy(lc(ringCols[i][0], ringCols[i][1], m)).addScalar(flashF * 0.15));
-      for (const b of banners) b.uniforms.uLight.value = lerp(0.42, 0.16, m) + flashF * 0.8;
+      for (const b of banners) b.uniforms.uLight.value = lerp(0.3, 0.13, m) + flashF * 0.8;
+      // the tussock shader is unlit, so its colours follow the light by hand
+      tussock.mesh.material.uniforms.uColA.value.copy(lc(0x2e2a1e, 0x0c1418, m)).addScalar(flashF * 0.3);
+      tussock.mesh.material.uniforms.uColB.value.copy(lc(0x433b28, 0x111c20, m)).addScalar(flashF * 0.3);
       fireBoost = lerp(D.fire, Nn.fire, m);
       fire.uniforms.uBright.value = lerp(0.8, 1.15, m);
       rain.mesh.material.uniforms.uOp.value = lerp(D.rain, Nn.rain, m);
@@ -1092,8 +1222,8 @@ export default {
         dur: 24,
       },
       { // up the causeway to the gate
-        pos: [[-40, heightAt(-40, -175) + 6, -175], [0, 20, -142], [28, 30, -112], [gateOut[0] + gn.x * 20, Y_B + 4, gateOut[1] + gn.z * 20]],
-        look: [[30, 20, -100], [gx, Y_B + 6, gz], [gx, Y_B + 8, gz], [gx, Y_B + 9, gz]],
+        pos: [[262, heightAt(262, -226) + 6, -226], [222, 20, -182], [190, 30, -146], [gateOut[0] + gn.x * 20, Y_B + 4, gateOut[1] + gn.z * 20]],
+        look: [[170, 22, -120], [gx, Y_B + 6, gz], [gx, Y_B + 8, gz], [gx, Y_B + 9, gz]],
         dur: 18,
       },
       { // the King's view from the gate tower
@@ -1111,15 +1241,27 @@ export default {
       { name: 'Front rank of the host', pos: [-40, heightAt(-40, -92) + 2.4, -92], look: [-45, 3, -140] },
       { name: 'Among the pikes', pos: [-110, heightAt(-110, -205) + 2, -205], look: [-30, 22, 0] },
       { name: 'The culvert', pos: [fc.p.x + fc.right.x * 22, heightAt(fc.p.x + fc.right.x * 22, fc.p.z + fc.right.z * 22) + 3, fc.p.z + fc.right.z * 22], look: [fc.p.x, 5, fc.p.z] },
-      { name: 'The causeway', pos: [-30, heightAt(-30, -168) + 3, -168], look: [gx, Y_B + 5, gz] },
+      { name: 'The causeway', pos: [252, heightAt(252, -214) + 3, -214], look: [gx, Y_B + 5, gz] },
       { name: 'Théoden above the gate', pos: [gtop.x + gn.x * 2, gtop.y + 2, gtop.z + gn.z * 2], look: [-40, 6, -220] },
-      { name: 'The Horn of Helm', pos: [KEEP.x - 20, Y_B + 64, KEEP.z - 14], look: [KEEP.x - 10, Y_B + 60.7, KEEP.z - 2] },
+      { name: 'The Horn of Helm', pos: [KEEP.x - 14, KEEP_GALLERY + 6, KEEP.z - 17], look: [KEEP.x - 1, KEEP_GALLERY + 3.4, KEEP.z - 2.5] },
       { name: 'Haldir’s company', pos: [-70, 18, 70], look: [-60, 8, 30] },
       { name: 'The Glittering Caves', pos: [4, heightAt(4, 400) + 6, 400], look: [4, heightAt(4, 440) + 6, 452] },
     ];
 
+    // The layout above is authored in mirror image; flip it so that, seen from
+    // the coomb, the Hornburg stands on the right of the Deeping Wall and the
+    // causeway climbs away to the far right, as in the films.
+    const world = new THREE.Group();
+    world.scale.x = -1;
+    for (const o of [...scene.children]) if (o !== rain.mesh) world.add(o);
+    scene.add(world);
+    const flipX = (p) => [-p[0], p[1], p[2]];
+    for (const sh of shots){ sh.pos = sh.pos.map(flipX); sh.look = sh.look.map(flipX); }
+    for (const vp of viewpoints){ vp.pos = flipX(vp.pos); vp.look = flipX(vp.look); }
+    const worldHeightAt = (x, z) => heightAt(-x, z);
+
     return {
-      scene, heightAt, shots, viewpoints,
+      scene, heightAt: worldHeightAt, shots, viewpoints,
       ready: texturesReady(),
       grade: MOODS.dusk.grade, exposure: MOODS.dusk.exposure,
       moods: ['dusk', 'night'],

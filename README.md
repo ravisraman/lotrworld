@@ -40,21 +40,28 @@ Open **`http://localhost:8000/#helmsdeep`** to start directly at Helm's Deep
    lantern-lit talans, niphredil in the sward, and the Lady radiant in white.
 7. **Rohan** — Edoras on its rocky crag in a golden grass sea, Meduseld's
    gabled hall, banners of the Mark, and an éored at full gallop.
-8. **Helm's Deep** — the night of the storm, before the first arrow: the
-   Hornburg on its rock (curtain wall, gatehouse, great hall, and the keep
-   with the Horn of Helm), the causeway climbing to the gate, the Deeping Wall
-   with its barred culvert, the gorge narrowing to the Glittering Caves, and
-   Helm's Dike far out in the coomb. Haldir's Galadhrim in gold scale and the
-   last men of the Westfold line the walls; Aragorn, Legolas, Gimli and Haldir
-   stand above the culvert, Théoden and Gamling over the gate. Below them
-   **ten thousand Uruk-hai** stand in ordered regiments — pike blocks in
-   front, shield-wall swordsmen with siege ladders raised, crossbowmen, two
-   ballistae, a battering ram at the causeway's foot, the blasting-fire on its
-   litters, and the torch-bearing berserker before the culvert — pikes slamming
-   the ground in a wave that rolls back through the host, torches guttering in
-   the rain, lightning showing the whole army for an instant. Toggle **last
-   light** (dusk) ↔ **night storm** with `N`; the **Explore** list glides you
-   to eleven vantage points and hands over to free flight.
+8. **Helm's Deep** — the night of the storm, before the first arrow. Laid out
+   from the films' establishing shots: a narrow cleft in a colossal mountain
+   front, opening onto the pale gravel fan of the Deeping Coomb between steep
+   tussock-and-scree flanks. Across the cleft's mouth runs the buttressed
+   Deeping Wall with its barred culvert; on its right rises the Hornburg — a
+   curtain of great ashlar blocks with square towers and heavy merlons, the
+   round inner ward, the great hall's two-storey arcade cut into the cliff
+   behind, and the tall, buttressed keep (with the Horn of Helm in its upper
+   gallery) where the wall meets the rock. The gate stands on the far side,
+   reached by a causeway climbing along the cliff's toe. Behind, the gorge
+   narrows to the Glittering Caves; Helm's Dike lies far out in the coomb.
+   Haldir's Galadhrim in gold scale and the last men of the Westfold line the
+   walls; Aragorn, Legolas, Gimli and Haldir stand above the culvert, Théoden
+   and Gamling over the gate. Below them **ten thousand Uruk-hai** stand in
+   ordered regiments — pike blocks in front, shield-wall swordsmen with siege
+   ladders raised, crossbowmen, two ballistae, a battering ram at the
+   causeway's foot, the blasting-fire on its litters, and the torch-bearing
+   berserker before the culvert — pikes slamming the ground in a wave that
+   rolls back through the host, torches guttering in the rain, lightning
+   showing the whole army for an instant. Toggle **overcast dusk** ↔ the
+   films' teal **night storm** with `N`; the **Explore** list glides you to
+   eleven vantage points and hands over to free flight.
 9. **Isengard** — Orthanc's four-horned crown over a scarred ring of smoking
    fire-pits, felled forests, toiling orcs, and wheeling crebain.
 10. **Minas Tirith** — seven white tiers against Mindolluin, the stone keel,
@@ -100,9 +107,11 @@ Left-edge dots navigate; each region cycles its cinematic shots when idle.
     patches: triplanar rock and two-scale ground blending for the terrain,
     world-space weathering (damp bases, rain streaks, lichen) for masonry,
     and rain-wetness for everything.
-- The layout follows the films' design of the fortress: the Hornburg on a
-  rock spur, the long causeway to the gate, and the Deeping Wall with its
-  culvert. Wētā's notes on the Uruk-hai (uniform black steel, specialised
+- The layout, proportions and palette were revised against a library of
+  film stills, concept art and maps of the battle (kept out of the repo for
+  copyright reasons): which side the Hornburg stands on, the keep's
+  silhouette, the hall's arcade, the shape of the coomb, the colour of the
+  stone, the teal night grade. Wētā's notes on the Uruk-hai (uniform black steel, specialised
   troops under crested captains, the White Hand) shaped the host. Film
   summaries set the numbers: ten thousand Uruk-hai against some three
   hundred men and Haldir's company of elves. Bret Devereaux's *A Collection
@@ -112,7 +121,7 @@ Left-edge dots navigate; each region cycles its cinematic shots when idle.
 | | |
 | --- | --- |
 | ![The host before the Hornburg](docs/helmsdeep/host-and-hornburg.jpg) | ![The Hornburg](docs/helmsdeep/hornburg.jpg) |
-| ![Galadhrim on the Deeping Wall](docs/helmsdeep/galadhrim-on-the-wall.jpg) | ![Lightning over the coomb](docs/helmsdeep/lightning.jpg) |
+| ![Galadhrim on the Deeping Wall](docs/helmsdeep/galadhrim-on-the-wall.jpg) | ![The night storm](docs/helmsdeep/lightning.jpg) |
 - Quality was iterated with an automated judge loop: headless screenshots of
   every shot in every region were scored by a panel of film-cinematography
   judge agents against the movies' looks, and their fix lists drove each
